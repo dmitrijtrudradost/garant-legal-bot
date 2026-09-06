@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+test_bot.py
+tz/
+
+# служебные каталоги, создаются автоматически при запуске/тестах
+.vkbottle/
+.pytest_cache/
