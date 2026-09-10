@@ -15,6 +15,7 @@ def test_news_keyboard_is_valid_json_with_expected_buttons():
         "🛡 Охрана — месяц",
         "📋 Главные новости — месяц",
         "📅 Свой период",
+        "➡️ Показать ещё",
     }
 
 

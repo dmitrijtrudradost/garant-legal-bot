@@ -153,3 +153,133 @@ def test_route_security_keyword_takes_priority_over_custom_topic_pattern():
 
     assert query is not None
     assert any("охранная деятельность" in topic for topic in query.topic)
+
+
+# -- Пагинация «ещё» (точное совпадение, не подстрока) ---------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["ещё", "еще", "дальше", "Показать ещё", "➡️ Показать ещё", "показать все"],
+)
+def test_is_show_more_request_exact_phrases(text):
+    assert IntentRouter.is_show_more_request(text) is True
+
+
+def test_is_show_more_request_false_for_news_phrase_containing_esche():
+    """«покажи ещё новости по охране» — новый запрос, не пагинация."""
+    assert IntentRouter.is_show_more_request("покажи ещё новости по охране") is False
+    assert router.route("покажи ещё новости по охране за месяц") is not None
+
+
+def test_is_show_more_request_false_for_unrelated_text():
+    assert IntentRouter.is_show_more_request("ещё раз привет") is False
+    assert IntentRouter.is_show_more_request("привет, как дела") is False
+
+
+# -- AI-шлюз (уровень 2) ---------------------------------------------------------
+
+
+class RecordingAIClient:
+    def __init__(self, reply: str | BaseException):
+        self.reply = reply
+        self.calls: list[dict] = []
+
+    async def complete(self, messages, *, temperature=None, max_tokens=None):
+        self.calls.append(
+            {"messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+        )
+        if isinstance(self.reply, BaseException):
+            raise self.reply
+        return self.reply
+
+
+def test_looks_like_news_for_ai_uses_legal_stems_only():
+    router_ai = IntentRouter()
+    assert router_ai.looks_like_news_for_ai("что поменялось в нормативке за месяц") is True
+    assert router_ai.looks_like_news_for_ai("привет, как дела") is False
+    assert router_ai.looks_like_news_for_ai("у меня новый сотрудник") is False
+
+
+@pytest.mark.asyncio
+async def test_classify_via_ai_does_not_call_client_without_gate_stem():
+    client = RecordingAIClient('{"is_news": true, "topic": "general"}')
+    router_ai = IntentRouter(ai_client=client)
+
+    result = await router_ai.classify_via_ai("привет, как дела")
+
+    assert result is None
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_classify_via_ai_does_not_call_client_when_ai_missing():
+    router_ai = IntentRouter()
+    assert await router_ai.classify_via_ai("что поменялось в нормативке") is None
+
+
+@pytest.mark.asyncio
+async def test_classify_via_ai_builds_query_from_valid_json():
+    payload = (
+        '{"is_news": true, "topic": "general", "custom_topic": null, '
+        '"period_days": 30, "date_from": null, "date_to": null, "territory": null}'
+    )
+    client = RecordingAIClient(payload)
+    router_ai = IntentRouter(ai_client=client)
+
+    query = await router_ai.classify_via_ai(
+        "подскажи, что поменялось в нормативке за последний месяц"
+    )
+
+    assert query is not None
+    assert query.date_from == date.today() - timedelta(days=30)
+    assert any("охранная деятельность" in topic for topic in query.topic)
+    assert any("Налоги" in topic for topic in query.topic)
+    assert client.calls[0]["temperature"] == 0
+    assert client.calls[0]["max_tokens"] == 200
+
+
+@pytest.mark.asyncio
+async def test_classify_via_ai_security_topic_and_territory():
+    payload = '{"is_news": true, "topic": "security", "period_days": 7, "territory": "Москва"}'
+    router_ai = IntentRouter(ai_client=RecordingAIClient(payload))
+
+    query = await router_ai.classify_via_ai("актуальные приказы по охране в Москве")
+
+    assert query is not None
+    assert any("охранная деятельность" in topic for topic in query.topic)
+    assert query.territory == "Москва"
+
+
+@pytest.mark.asyncio
+async def test_classify_via_ai_strips_json_fence_and_uses_custom_topic():
+    payload = (
+        '```json\n{"is_news": true, "topic": "custom", '
+        '"custom_topic": "строительство", "period_days": 7}\n```'
+    )
+    router_ai = IntentRouter(ai_client=RecordingAIClient(payload))
+
+    query = await router_ai.classify_via_ai("что нового в нормативных актах по стройке")
+
+    assert query is not None
+    assert query.topic == ["строительство"]
+
+
+@pytest.mark.asyncio
+async def test_classify_via_ai_returns_none_when_is_news_false():
+    router_ai = IntentRouter(ai_client=RecordingAIClient('{"is_news": false}'))
+    assert await router_ai.classify_via_ai("разбери этот приказ как юрист") is None
+
+
+@pytest.mark.asyncio
+async def test_classify_via_ai_returns_none_on_invalid_json():
+    router_ai = IntentRouter(ai_client=RecordingAIClient("это не json"))
+    assert await router_ai.classify_via_ai("актуальные постановления") is None
+
+
+@pytest.mark.asyncio
+async def test_classify_via_ai_returns_none_on_ai_client_error():
+    from core.ai_client import AIClientError
+
+    router_ai = IntentRouter(ai_client=RecordingAIClient(AIClientError("нет связи")))
+    assert await router_ai.classify_via_ai("актуальные постановления") is None

@@ -46,9 +46,17 @@ class AIClient:
         self._temperature = temperature
         self._max_tokens = max_tokens
 
-    async def complete(self, messages: list[dict[str, str]]) -> str:
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
         """Отправляет историю сообщений в ProxyAPI и возвращает текст ответа ассистента.
 
+        `temperature` / `max_tokens` перекрывают значения конструктора на один вызов
+        (классификатор намерений использует temperature=0 и короткий max_tokens).
         Бросает AIClientError с понятным для пользователя текстом при любом сбое.
         Ключ API никогда не попадает в лог.
         """
@@ -59,8 +67,8 @@ class AIClient:
         payload = {
             "model": self._model,
             "messages": messages,
-            "temperature": self._temperature,
-            "max_tokens": self._max_tokens,
+            "temperature": self._temperature if temperature is None else temperature,
+            "max_tokens": self._max_tokens if max_tokens is None else max_tokens,
         }
 
         try:

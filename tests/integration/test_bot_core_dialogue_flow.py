@@ -6,6 +6,7 @@ from core.history import InMemoryDialogueHistory
 from core.intent_router import IntentRouter
 from core.models import IncomingMessage
 from core.news.formatter import NewsFormatter
+from core.news.results_cache import InMemoryNewsResultsCache
 
 
 class FakeAIClient:
@@ -25,6 +26,7 @@ async def test_regular_message_goes_through_dialogue_service():
         intent_router=IntentRouter(),
         news_parser=FakeNewsParser(),
         news_formatter=NewsFormatter(),
+        results_cache=InMemoryNewsResultsCache(),
     )
 
     incoming = IncomingMessage(peer_id="peer1", user_name="Иван", text="Привет, как дела?", interface="console")
@@ -39,6 +41,7 @@ def test_greeting_uses_user_name_or_fallback():
         intent_router=IntentRouter(),
         news_parser=FakeNewsParser(),
         news_formatter=NewsFormatter(),
+        results_cache=InMemoryNewsResultsCache(),
     )
 
     assert "Иван" in bot_core.greeting_for("Иван")
