@@ -1,23 +1,26 @@
 """IntentRouter — определяет, обычный это диалог или запрос новостей ГАРАНТ ПРАЙМ.
 
-MVP: keyword-matching (по основам слов, без учёта падежей/склонений через
-NLP). При необходимости заменить на классификатор/NLP — осознанное
-упрощение для первой итерации (см. ТЗ, раздел 3.4 и 9).
+Уровень 1 (`route`) — синхронный keyword-matching по основам слов, без NLP.
+Уровень 2 (`classify_via_ai`) — один stateless-вызов AI, только если уровень 1
+не сработал и в тексте есть юридический корень мягкого шлюза
+(`AI_FALLBACK_GATE_STEMS`). Без клиента AI уровень 2 просто не вызывается.
 
 Территория (`REGION_KEYWORDS`) и произвольные темы (`CUSTOM_TOPIC_PATTERN`) —
 тот же MVP-принцип, тот же класс ограничений (см. ТЗ tz-garant-news-filtering.md,
 раздел 3.3.5, и docstring соответствующих констант ниже). `IntentRouter`
-синхронный и не обращается к дереву категорий ГАРАНТ сам — он только
-извлекает СЫРЫЕ ключевые слова (`NewsQuery.territory`/`.topic`), а
-резолюция по дереву происходит один раз, в `GarantApiParser`
-(`core/news/category_tree.py`) — без дублирования обхода дерева.
+не обращается к дереву категорий ГАРАНТ сам — он только извлекает СЫРЫЕ
+ключевые слова (`NewsQuery.territory`/`.topic`), а резолюция по дереву
+происходит один раз, в `GarantApiParser` (`core/news/category_tree.py`).
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 from datetime import date, timedelta
 
+from core.ai_client import AIClient, AIClientError
 from core.models import NewsQuery
 from core.news.presets import (
     DEFAULT_LOOKBACK_DAYS,
@@ -26,6 +29,8 @@ from core.news.presets import (
     PRESET_TAX_ACCOUNTING,
     preset_custom_topic,
 )
+
+logger = logging.getLogger(__name__)
 
 # Ключевые слова/основы, вынесенные константами — расширять здесь, не трогая логику ниже.
 # Фразы-триггеры целиком (срабатывают сами по себе).
@@ -91,8 +96,73 @@ _PERIOD_CLAUSE_PATTERN = re.compile(
     r"\bза\s+(?:\d+\s+)?(?:недел\w*|месяц\w*|квартал\w*|год\w*|дн\w*)\b", re.IGNORECASE
 )
 
+# Мягкий шлюз перед AI-классификатором: только юридическая/официальная лексика.
+# Голые «нов»/«измен»/«закон» сюда не входят — слишком широкие для бытовой речи.
+AI_FALLBACK_GATE_STEMS = [
+    "норматив",
+    "правов",
+    "постановлен",
+    "приказ",
+    "распоряжен",
+    "указ",
+    "поправк",
+    "актуальн",
+    "гарант",
+    "прайм",
+    "юридич",
+    "регулирован",
+    "законодательств",
+]
+
+CLASSIFY_TEMPERATURE = 0.0
+CLASSIFY_MAX_TOKENS = 200
+
+NEWS_CLASSIFY_SYSTEM_PROMPT = (
+    "Ты классификатор запросов новостей законодательства ГАРАНТ ПРАЙМ. "
+    "Пользователь пишет по-русски. Верни СТРОГО один JSON-объект без пояснений "
+    "и без markdown-обёртки. Схема: "
+    '{"is_news": bool, "topic": "security"|"tax"|"general"|"custom"|null, '
+    '"custom_topic": str|null, "period_days": int|null, '
+    '"date_from": "YYYY-MM-DD"|null, "date_to": "YYYY-MM-DD"|null, '
+    '"territory": str|null}. '
+    "is_news=true только если пользователь хочет новости, изменения законодательства, "
+    "нормативных актов или правовой информации. "
+    "topic: security — охрана и лицензирование охранной деятельности; "
+    "tax — налоги и бухучёт; custom — другая конкретная тема "
+    "(тогда custom_topic — краткое название темы); "
+    "general — общие главные новости законодательства. "
+    "period_days: 7 неделя, 30 месяц, 90 квартал; если период неясен — null. "
+    "date_from/date_to заполняй только если явно названы конкретные даты. "
+    "territory — регион, если назван, иначе null."
+)
+
+# Точные фразы пагинации после нормализации (нижний регистр, без эмодзи).
+# Не подстрока: «покажи ещё новости по охране» сюда не попадает.
+SHOW_MORE_PHRASES = frozenset(
+    {
+        "ещё",
+        "еще",
+        "дальше",
+        "далее",
+        "следующие",
+        "покажи ещё",
+        "покажи еще",
+        "показать ещё",
+        "показать еще",
+        "остальные",
+        "показать все",
+    }
+)
+SHOW_MORE_BUTTON_LABEL = "➡️ Показать ещё"
+_NON_WORD_CHARS = re.compile(r"[^\w\s-]+", re.UNICODE)
+_JSON_FENCE_PREFIX = re.compile(r"^```(?:json)?\s*", re.IGNORECASE)
+_JSON_FENCE_SUFFIX = re.compile(r"\s*```$")
+
 
 class IntentRouter:
+    def __init__(self, ai_client: AIClient | None = None) -> None:
+        self._ai_client = ai_client
+
     def route(self, text: str) -> NewsQuery | None:
         """Вернуть NewsQuery, если сообщение распознано как новостной запрос, иначе None (обычный диалог)."""
         normalized = text.lower()
@@ -132,6 +202,109 @@ class IntentRouter:
         if territory:
             query.territory = territory
         return query
+
+    def looks_like_news_for_ai(self, text: str) -> bool:
+        """Мягкий шлюз: в тексте есть юридический/официальный корень, но жёсткий route() мог не сработать."""
+        normalized = text.lower()
+        return any(stem in normalized for stem in AI_FALLBACK_GATE_STEMS)
+
+    async def classify_via_ai(self, text: str) -> NewsQuery | None:
+        """Один stateless-вызов AI, только если клиент задан и сработал мягкий шлюз.
+
+        Не пишет в историю диалога. Любая ошибка (сеть, битый JSON, is_news не true)
+        тихо возвращает None — обычный диалог, бот не падает.
+        """
+        if self._ai_client is None or not self.looks_like_news_for_ai(text):
+            return None
+
+        messages = [
+            {"role": "system", "content": NEWS_CLASSIFY_SYSTEM_PROMPT},
+            {"role": "user", "content": text},
+        ]
+        try:
+            raw = await self._ai_client.complete(
+                messages,
+                temperature=CLASSIFY_TEMPERATURE,
+                max_tokens=CLASSIFY_MAX_TOKENS,
+            )
+        except AIClientError as exc:
+            logger.warning("IntentRouter: AI-классификация недоступна: %s", exc)
+            return None
+
+        return self._news_query_from_ai_payload(raw)
+
+    def _news_query_from_ai_payload(self, raw: str) -> NewsQuery | None:
+        try:
+            data = json.loads(self._strip_json_fence(raw))
+        except json.JSONDecodeError:
+            logger.warning("IntentRouter: невалидный JSON от AI-классификатора")
+            return None
+
+        if not isinstance(data, dict):
+            logger.warning("IntentRouter: AI-классификатор вернул не объект JSON")
+            return None
+
+        is_news = data.get("is_news")
+        if is_news is not True and is_news != "true":
+            return None
+
+        date_from, date_to = self._dates_from_ai(data)
+        topic = data.get("topic")
+        if topic == "security":
+            query = PRESET_SECURITY_ORG(date_from=date_from, date_to=date_to)
+        elif topic == "tax":
+            query = PRESET_TAX_ACCOUNTING(date_from=date_from, date_to=date_to)
+        elif topic == "custom":
+            custom = data.get("custom_topic")
+            if isinstance(custom, str) and custom.strip():
+                query = preset_custom_topic([custom.strip()], date_from=date_from, date_to=date_to)
+            else:
+                query = PRESET_ALL_MAIN(date_from=date_from, date_to=date_to)
+        else:
+            query = PRESET_ALL_MAIN(date_from=date_from, date_to=date_to)
+
+        territory = data.get("territory")
+        if isinstance(territory, str) and territory.strip():
+            query.territory = territory.strip()
+        return query
+
+    @staticmethod
+    def _dates_from_ai(data: dict) -> tuple[date, date]:
+        raw_from, raw_to = data.get("date_from"), data.get("date_to")
+        if raw_from and raw_to:
+            try:
+                date_from = date.fromisoformat(str(raw_from)[:10])
+                date_to = date.fromisoformat(str(raw_to)[:10])
+            except ValueError:
+                date_from = date_to = None
+            else:
+                if date_from > date_to:
+                    date_from, date_to = date_to, date_from
+                return date_from, date_to
+
+        period_days = data.get("period_days")
+        if isinstance(period_days, bool) or not isinstance(period_days, (int, float)) or period_days <= 0:
+            days = DEFAULT_LOOKBACK_DAYS
+        else:
+            days = int(period_days)
+        return date.today() - timedelta(days=days), date.today()
+
+    @staticmethod
+    def _strip_json_fence(raw: str) -> str:
+        text = raw.strip()
+        text = _JSON_FENCE_PREFIX.sub("", text, count=1)
+        text = _JSON_FENCE_SUFFIX.sub("", text)
+        return text.strip()
+
+    @staticmethod
+    def is_show_more_request(text: str) -> bool:
+        """Точная фраза пагинации («ещё», кнопка «Показать ещё»), не подстрока в произвольном тексте."""
+        return IntentRouter._normalize_exact_phrase(text) in SHOW_MORE_PHRASES
+
+    @staticmethod
+    def _normalize_exact_phrase(text: str) -> str:
+        cleaned = _NON_WORD_CHARS.sub(" ", text.lower())
+        return " ".join(cleaned.split())
 
     @staticmethod
     def is_custom_period_help_request(text: str) -> bool:

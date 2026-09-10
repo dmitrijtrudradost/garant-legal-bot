@@ -35,8 +35,10 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, response: FakeResponse):
         self._response = response
+        self.last_json: dict | None = None
 
     def post(self, *args, **kwargs):
+        self.last_json = kwargs.get("json")
         return self._response
 
     async def __aenter__(self):
@@ -46,8 +48,10 @@ class FakeSession:
         return False
 
 
-def patch_session(monkeypatch, response: FakeResponse) -> None:
-    monkeypatch.setattr(ai_client_module.aiohttp, "ClientSession", lambda: FakeSession(response))
+def patch_session(monkeypatch, response: FakeResponse) -> FakeSession:
+    session = FakeSession(response)
+    monkeypatch.setattr(ai_client_module.aiohttp, "ClientSession", lambda: session)
+    return session
 
 
 @pytest.mark.asyncio
@@ -89,3 +93,15 @@ async def test_complete_raises_on_generic_error(monkeypatch):
 
     with pytest.raises(AIClientError):
         await client.complete([{"role": "user", "content": "Привет"}])
+
+
+@pytest.mark.asyncio
+async def test_complete_overrides_temperature_and_max_tokens(monkeypatch, proxyapi_sample_response):
+    session = patch_session(monkeypatch, FakeResponse(200, payload=proxyapi_sample_response))
+    client = AIClient(api_key="test-key", temperature=0.7, max_tokens=1000)
+
+    await client.complete([{"role": "user", "content": "Привет"}], temperature=0, max_tokens=200)
+
+    assert session.last_json is not None
+    assert session.last_json["temperature"] == 0
+    assert session.last_json["max_tokens"] == 200

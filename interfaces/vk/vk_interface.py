@@ -16,6 +16,7 @@ from vkbottle import BaseMiddleware, Keyboard, KeyboardButtonColor, Text, VKAPIE
 from vkbottle.bot import Bot, Message
 
 from core.bot_core import BotCore
+from core.intent_router import SHOW_MORE_BUTTON_LABEL
 from core.models import IncomingMessage
 from interfaces.base import BaseInterface
 
@@ -34,6 +35,7 @@ def _build_news_keyboard() -> str:
     "Охрана — неде..."); один full-width текст на строку читается целиком.
     Пресеты — только за месяц (самый частый период); недельный/квартальный
     период и произвольные даты — через кнопку "Свой период" текстом.
+    «Показать ещё» листает уже полученный список, без нового запроса к ГАРАНТ.
     """
     keyboard = Keyboard(one_time=False, inline=False)
 
@@ -42,6 +44,8 @@ def _build_news_keyboard() -> str:
     keyboard.add(Text("📋 Главные новости — месяц"), color=KeyboardButtonColor.SECONDARY)
     keyboard.row()
     keyboard.add(Text("📅 Свой период"), color=KeyboardButtonColor.SECONDARY)
+    keyboard.row()
+    keyboard.add(Text(SHOW_MORE_BUTTON_LABEL), color=KeyboardButtonColor.SECONDARY)
 
     return keyboard.get_json()
 

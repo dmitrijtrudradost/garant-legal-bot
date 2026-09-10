@@ -17,6 +17,7 @@ from core.intent_router import IntentRouter
 from core.models import IncomingMessage
 from core.news import parser_api as parser_api_module
 from core.news.formatter import NewsFormatter
+from core.news.results_cache import InMemoryNewsResultsCache
 from core.news.parser_api import GarantApiParser
 
 
@@ -67,6 +68,7 @@ def make_bot_core(news_parser) -> BotCore:
         intent_router=IntentRouter(),
         news_parser=news_parser,
         news_formatter=NewsFormatter(),
+        results_cache=InMemoryNewsResultsCache(),
     )
 
 

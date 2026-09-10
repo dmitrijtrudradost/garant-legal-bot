@@ -21,6 +21,7 @@ from core.history import InMemoryDialogueHistory
 from core.intent_router import IntentRouter
 from core.news.formatter import NewsFormatter
 from core.news.parser_factory import GarantModeConfigError, NullNewsParser, get_news_parser
+from core.news.results_cache import InMemoryNewsResultsCache
 from interfaces.base import BaseInterface
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -42,9 +43,10 @@ def build_bot_core() -> BotCore:
         news_parser = NullNewsParser()
 
     news_formatter = NewsFormatter()
-    intent_router = IntentRouter()
+    intent_router = IntentRouter(ai_client=ai_client)
+    results_cache = InMemoryNewsResultsCache()
 
-    return BotCore(dialogue_service, intent_router, news_parser, news_formatter)
+    return BotCore(dialogue_service, intent_router, news_parser, news_formatter, results_cache)
 
 
 def build_interface(name: str, bot_core: BotCore) -> BaseInterface:
