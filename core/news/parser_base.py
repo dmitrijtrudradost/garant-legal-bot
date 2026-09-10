@@ -20,3 +20,7 @@ class NewsParser(ABC):
     @abstractmethod
     async def fetch(self, query: NewsQuery) -> list[NewsItem]:
         """Вернуть список новостей, подходящих под фильтры query."""
+
+    async def get_category_tree(self) -> list[dict] | None:
+        """Дерево категорий ГАРАНТ для справки. None, если источник его не отдаёт."""
+        return None

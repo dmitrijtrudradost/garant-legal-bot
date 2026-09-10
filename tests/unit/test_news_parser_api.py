@@ -177,6 +177,17 @@ async def test_fetch_truncates_period_exceeding_max_chunks(monkeypatch, garant_a
     assert any("усечён" in record.message for record in caplog.records)
 
 
+def test_six_month_period_fits_in_max_chunks():
+    parser = GarantApiParser(token="test-token")
+    date_to = date(2026, 9, 10)
+    date_from = date_to - timedelta(days=180)
+    chunks = parser._split_into_chunks(date_from, date_to)
+
+    assert len(chunks) <= MAX_CHUNKS_PER_FETCH
+    assert chunks[0][0] == date_from
+    assert chunks[-1][1] == date_to
+
+
 # -- Тема исключает территорию/вид информации (эмпирическое решение, 09.09.2026) -
 
 
@@ -311,7 +322,7 @@ async def test_resolve_category_ids_matches_topic_by_stem(monkeypatch, garant_ap
 
 
 @pytest.mark.asyncio
-async def test_resolve_category_ids_falls_back_to_root_when_no_match(
+async def test_resolve_category_ids_unmatched_topic_returns_empty(
     monkeypatch, garant_api_categories_sample, caplog
 ):
     patch_session(monkeypatch, [FakeResponse(200, payload=garant_api_categories_sample)])
@@ -320,8 +331,24 @@ async def test_resolve_category_ids_falls_back_to_root_when_no_match(
     with caplog.at_level(logging.WARNING):
         ids = await parser._resolve_category_ids(["Экология и природопользование"])
 
-    assert ids == [101, 201]  # корневые ID дерева — максимально широкий fallback
-    assert any("fallback" in record.message.lower() for record in caplog.records)
+    assert ids == []
+    assert any("не совпала" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_fetch_unmatched_topic_skips_create_news(
+    monkeypatch, garant_api_categories_branched_sample, caplog
+):
+    calls = patch_session(monkeypatch, [FakeResponse(200, payload=garant_api_categories_branched_sample)])
+    parser = GarantApiParser(token="test-token")
+    query = _make_query(date(2026, 9, 1), date(2026, 9, 5), topic=["астрология"])
+
+    with caplog.at_level(logging.WARNING):
+        items = await parser.fetch(query)
+
+    assert items == []
+    assert [c["method"] for c in calls] == ["GET"]
+    assert any("ленте не выполняется" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -387,7 +414,7 @@ async def test_fetch_handles_404_with_category_fallback(
     post_calls = [c for c in calls if c["method"] == "POST"]
     assert len(post_calls) == 2
     assert post_calls[0]["json"]["categories"] == [101]
-    assert post_calls[1]["json"]["categories"] == [101, 201]  # корневые ID
+    assert post_calls[1]["json"]["categories"] == [101, 102, 103, 201, 202]
 
 
 @pytest.mark.asyncio

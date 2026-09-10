@@ -10,7 +10,9 @@ import asyncio
 import sys
 
 from core.bot_core import BotCore
+from core.intent_router import HELP_CATALOG_LINK_PREFIX
 from core.models import IncomingMessage
+from core.news.catalog_html import CATALOG_HTML_PATH, CATALOG_PDF_PATH, save_catalog_html
 from interfaces.base import BaseInterface
 
 EXIT_COMMANDS = {"/exit", "exit", "quit"}
@@ -51,7 +53,17 @@ class ConsoleInterface(BaseInterface):
                 interface="console",
             )
             outgoing = await self._bot_core.handle_message(incoming)
-            print(outgoing.text)
+            print(self._text_for_console(outgoing.text, outgoing.catalog_html))
+
+    @staticmethod
+    def _text_for_console(text: str, catalog_html: str | None) -> str:
+        if not catalog_html:
+            return text
+        html_path = CATALOG_HTML_PATH if CATALOG_HTML_PATH.is_file() else save_catalog_html(catalog_html)
+        lines = [text, f"{HELP_CATALOG_LINK_PREFIX}{html_path.as_uri()}"]
+        if CATALOG_PDF_PATH.is_file():
+            lines.append(f"{HELP_CATALOG_LINK_PREFIX}{CATALOG_PDF_PATH.as_uri()}")
+        return "\n\n".join(lines)
 
     @staticmethod
     def _force_utf8_io() -> None:

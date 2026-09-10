@@ -58,6 +58,9 @@ def test_route_returns_none_for_regular_dialogue():
         ("Охрана: за 3 мес.", 90),
         ("Что нового по охране в квартале?", 90),
         ("Что нового по охране?", 7),  # период не указан — значение по умолчанию
+        ("охранные новости за 6 месяцев", 180),
+        ("Охрана за полгода", 180),
+        ("Охрана за год", 365),
     ],
 )
 def test_route_applies_period_from_text_to_date_from(text, expected_days):
@@ -68,10 +71,24 @@ def test_route_applies_period_from_text_to_date_from(text, expected_days):
     assert query.date_from == expected_date_from
 
 
+def test_route_six_months_uses_security_preset_not_custom_topic():
+    query = router.route("охранные новости за 6 месяцев")
+
+    assert query is not None
+    assert any("охранная деятельность" in topic for topic in query.topic)
+    assert query.date_from == date.today() - timedelta(days=180)
+    assert query.date_to == date.today()
+
+
 def test_route_recognizes_button_labels():
     """Кнопки VK-клавиатуры (interfaces/vk/vk_interface.py) шлют такие тексты сообщением."""
     for label in ["🛡 Охрана — месяц", "📋 Главные новости — месяц"]:
         assert router.route(label) is not None, f"кнопка {label!r} не распознана как новостной запрос"
+
+
+def test_route_help_button_is_not_a_news_request():
+    assert router.route("Справка") is None
+    assert IntentRouter.is_help_request("Справка") is True
 
 
 @pytest.mark.parametrize(
@@ -94,6 +111,13 @@ def test_route_parses_custom_date_range_from_text(text, expected_from, expected_
 def test_route_ignores_invalid_custom_date_range():
     # 31 февраля не существует — считаем, что дат нет, обычный диалог
     assert router.route("31.02.2026-01.03.2026") is None
+
+
+def test_is_help_request_exact_phrases():
+    for phrase in ("справка", "помощь", "как пользоваться", "список сфер", "список фильтров"):
+        assert IntentRouter.is_help_request(phrase) is True
+    assert IntentRouter.is_help_request("📅 Свой период") is True
+    assert IntentRouter.is_help_request("хочу свой период новостей") is True
 
 
 def test_is_custom_period_help_request_without_dates():
@@ -150,6 +174,52 @@ def test_route_security_keyword_takes_priority_over_custom_topic_pattern():
     """"новости по охране" совпадает и с SECURITY_KEYWORDS, и с CUSTOM_TOPIC_PATTERN —
     готовый пресет должен выиграть, а не произвольная тема "охране"."""
     query = router.route("новости по охране")
+
+    assert query is not None
+    assert any("охранная деятельность" in topic for topic in query.topic)
+
+
+@pytest.mark.parametrize(
+    "text,expected_topic",
+    [
+        ("Воздушный транспорт за период 01.08.2026-06.09.2026", "воздушный транспорт"),
+        ("Новости из сферы строительство за 01.08.2026-06.09.2026", "строительство"),
+        ("по образованию за неделю", "образованию"),
+        (
+            "Предоставь новости в сфере Образования за период 01.01.2026-10.09.2026",
+            "образования",
+        ),
+        ("Новости в сфере Легкая промышленность за 6 месяцев", "легкая промышленность"),
+    ],
+)
+def test_route_named_sphere_becomes_custom_topic(text, expected_topic):
+    query = router.route(text)
+
+    assert query is not None
+    assert query.topic == [expected_topic]
+
+
+def test_route_dates_without_sphere_use_all_main_preset():
+    query = router.route("01.08.2026-06.09.2026")
+
+    assert query is not None
+    assert any("охранная деятельность" in topic for topic in query.topic)
+    assert any("Налоги" in topic for topic in query.topic)
+
+
+def test_route_main_news_button_uses_all_main_preset():
+    query = router.route("📋 Главные новости — месяц")
+
+    assert query is not None
+    assert any("охранная деятельность" in topic for topic in query.topic)
+    assert any("Налоги" in topic for topic in query.topic)
+    assert query.date_from == date.today() - timedelta(days=30)
+
+
+def test_route_security_in_sphere_phrase_still_uses_preset():
+    query = router.route(
+        "Предоставь новости в сфере охранных услуг за период 01.01.2026-10.09.2026"
+    )
 
     assert query is not None
     assert any("охранная деятельность" in topic for topic in query.topic)

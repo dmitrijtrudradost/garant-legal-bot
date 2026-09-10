@@ -14,8 +14,8 @@ def test_news_keyboard_is_valid_json_with_expected_buttons():
     assert labels == {
         "🛡 Охрана — месяц",
         "📋 Главные новости — месяц",
-        "📅 Свой период",
         "➡️ Показать ещё",
+        "Справка",
     }
 
 
