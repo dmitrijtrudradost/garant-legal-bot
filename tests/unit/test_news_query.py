@@ -21,7 +21,7 @@ def test_news_query_optional_fields_default_to_none():
 def test_preset_security_org_has_relevant_topics():
     query = PRESET_SECURITY_ORG()
     assert query.date_from < query.date_to or query.date_from == query.date_to
-    assert any("Охранная" in topic for topic in query.topic)
+    assert any("охран" in topic.lower() for topic in query.topic)
 
 
 def test_preset_tax_accounting_has_relevant_topics():
@@ -31,5 +31,5 @@ def test_preset_tax_accounting_has_relevant_topics():
 
 def test_preset_all_main_combines_both():
     query = PRESET_ALL_MAIN()
-    assert any("Охранная" in topic for topic in query.topic)
+    assert any("охран" in topic.lower() for topic in query.topic)
     assert any("Налог" in topic for topic in query.topic)

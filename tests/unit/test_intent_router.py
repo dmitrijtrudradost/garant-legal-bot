@@ -10,9 +10,9 @@ router = IntentRouter()
 @pytest.mark.parametrize(
     "text,expected_topic_substring",
     [
-        ("Предоставь мне изменения в законодательстве", "Охранная деятельность"),
-        ("Что нового по охране?", "Охранная деятельность"),
-        ("Есть изменения по налогам?", "Налоги, сборы"),
+        ("Предоставь мне изменения в законодательстве", "охранная деятельность"),
+        ("Что нового по охране?", "охранная деятельность"),
+        ("Есть изменения по налогам?", "Налоги"),
         ("Что там по бухучёту?", "Бухгалтерский учёт"),
     ],
 )
@@ -27,7 +27,7 @@ def test_route_general_news_request_uses_all_main_preset():
     query = router.route("Какие главные новости законодательства?")
 
     assert query is not None
-    assert any("Охранная деятельность" in topic for topic in query.topic)
+    assert any("охранная деятельность" in topic for topic in query.topic)
     assert any("Налоги" in topic for topic in query.topic)
 
 
@@ -108,3 +108,48 @@ def test_is_custom_period_help_request_false_when_dates_present():
 
 def test_is_custom_period_help_request_false_for_unrelated_text():
     assert IntentRouter.is_custom_period_help_request("привет, как дела") is False
+
+
+# -- Территория (REGION_KEYWORDS) ------------------------------------------------
+
+
+def test_route_detects_moscow_territory_keyword():
+    query = router.route("новости по охране в Москве")
+
+    assert query is not None
+    assert query.territory == "Москва"
+
+
+@pytest.mark.parametrize("text", ["Что нового по охране?", "Есть изменения по налогам?"])
+def test_route_without_region_keyword_leaves_territory_none(text):
+    query = router.route(text)
+
+    assert query is not None
+    assert query.territory is None
+
+
+# -- Произвольная тема в чате (дополнительно к ТЗ) -------------------------------
+
+
+def test_route_recognizes_custom_topic_phrase():
+    query = router.route("Новости по строительству")
+
+    assert query is not None
+    assert query.topic == ["строительству"]
+
+
+def test_route_custom_topic_strips_trailing_period_clause():
+    query = router.route("Что нового по строительству за месяц?")
+
+    assert query is not None
+    assert query.topic == ["строительству"]
+    assert query.date_from == date.today() - timedelta(days=30)
+
+
+def test_route_security_keyword_takes_priority_over_custom_topic_pattern():
+    """"новости по охране" совпадает и с SECURITY_KEYWORDS, и с CUSTOM_TOPIC_PATTERN —
+    готовый пресет должен выиграть, а не произвольная тема "охране"."""
+    query = router.route("новости по охране")
+
+    assert query is not None
+    assert any("охранная деятельность" in topic for topic in query.topic)

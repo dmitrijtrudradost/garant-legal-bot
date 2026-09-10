@@ -12,7 +12,7 @@ from core.dialogue_service import DialogueService
 from core.intent_router import CUSTOM_PERIOD_HELP_TEXT, IntentRouter
 from core.models import IncomingMessage, OutgoingMessage
 from core.news.formatter import NewsFormatter
-from core.news.parser import NewsParser
+from core.news.parser_base import NewsParser
 
 logger = logging.getLogger(__name__)
 
