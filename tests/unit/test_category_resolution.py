@@ -92,3 +92,42 @@ def test_resolve_categories_ignores_generic_activity_word_false_positives():
     )
 
     assert ids == [137]  # не [20, 84, 137, 260]
+
+
+def test_resolve_categories_and_match_keeps_narrow_transport_node(
+    garant_api_categories_branched_sample,
+):
+    categories = garant_api_categories_branched_sample["categories"]
+
+    ids = category_tree.resolve_categories(
+        categories, ["воздушный транспорт"], branch=category_tree.BRANCH_INTEREST
+    )
+
+    assert ids == [49]
+
+
+def test_resolve_categories_construction_is_not_transport(garant_api_categories_branched_sample):
+    categories = garant_api_categories_branched_sample["categories"]
+
+    ids = category_tree.resolve_categories(
+        categories, ["строительство"], branch=category_tree.BRANCH_INTEREST
+    )
+
+    assert ids == [60]
+
+
+def test_resolve_categories_drops_junk_and_matches_education_by_prefix(
+    garant_api_categories_branched_sample,
+):
+    categories = garant_api_categories_branched_sample["categories"]
+
+    ids = category_tree.resolve_categories(
+        categories, ["предоставь образования"], branch=category_tree.BRANCH_INTEREST
+    )
+
+    assert ids == [70]
+
+
+def test_stem_hits_text_education_inflection():
+    assert category_tree.stem_hits_text("образования", "Образование") is True
+    assert category_tree.stem_hits_text("предоставь", "Образование") is False

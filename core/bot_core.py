@@ -9,8 +9,19 @@ from __future__ import annotations
 import logging
 
 from core.dialogue_service import DialogueService
-from core.intent_router import CUSTOM_PERIOD_HELP_TEXT, IntentRouter
+from core.intent_router import (
+    HELP_CATALOG_UNAVAILABLE,
+    HELP_TEXT,
+    IntentRouter,
+)
 from core.models import IncomingMessage, OutgoingMessage
+from core.news.catalog_html import (
+    CATALOG_PDF_PATH,
+    html_to_pdf,
+    render_catalog_html,
+    save_catalog_html,
+    save_catalog_pdf,
+)
 from core.news.formatter import MAX_ITEMS_IN_REPLY, NewsFormatter
 from core.news.parser_base import NewsParser
 from core.news.results_cache import NewsResultsCache
@@ -45,8 +56,8 @@ class BotCore:
         return self._dialogue_service.ensure_started(peer_id)
 
     async def handle_message(self, message: IncomingMessage) -> OutgoingMessage:
-        if IntentRouter.is_custom_period_help_request(message.text):
-            return OutgoingMessage(text=CUSTOM_PERIOD_HELP_TEXT)
+        if IntentRouter.is_help_request(message.text):
+            return await self._help_message()
 
         if IntentRouter.is_show_more_request(message.text):
             return self._page_from_cache(message.peer_id)
@@ -84,3 +95,40 @@ class BotCore:
         return OutgoingMessage(
             text=self._news_formatter.format_page(page, shown_before=shown_before, total=total)
         )
+
+    async def _help_message(self) -> OutgoingMessage:
+        categories = None
+        getter = getattr(self._news_parser, "get_category_tree", None)
+        if callable(getter):
+            try:
+                categories = await getter()
+            except Exception as exc:  # noqa: BLE001 - справка не должна ронять бота
+                logger.error("BotCore: не удалось получить дерево категорий для справки: %s", exc)
+
+        if not categories:
+            return OutgoingMessage(text=f"{HELP_TEXT}\n\n{HELP_CATALOG_UNAVAILABLE}")
+
+        html = render_catalog_html(categories)
+        try:
+            save_catalog_html(html)
+        except OSError as exc:
+            logger.error("BotCore: не удалось сохранить HTML-каталог в docs/: %s", exc)
+
+        pdf_bytes = None
+        try:
+            pdf_bytes = await html_to_pdf(html)
+            save_catalog_pdf(pdf_bytes)
+        except Exception as exc:  # noqa: BLE001 - справка без свежего PDF не должна ронять бота
+            logger.error("BotCore: не удалось сгенерировать PDF-каталог: %s", exc)
+            pdf_bytes = _read_existing_catalog_pdf()
+
+        return OutgoingMessage(text=HELP_TEXT, catalog_html=html, catalog_pdf=pdf_bytes)
+
+
+def _read_existing_catalog_pdf() -> bytes | None:
+    try:
+        if CATALOG_PDF_PATH.is_file():
+            return CATALOG_PDF_PATH.read_bytes()
+    except OSError as exc:
+        logger.error("BotCore: не удалось прочитать PDF-каталог из docs/: %s", exc)
+    return None

@@ -120,8 +120,41 @@ def resolve_categories(
         stems = extract_stems(keyword)
         if not stems:
             continue
+        grounded = [stem for stem in stems if any(stem_hits_text(stem, text) for text, _ in all_nodes)]
+        if not grounded:
+            continue
         for text, node_id in all_nodes:
-            if any(stem in text.lower() for stem in stems):
+            # Одна фраза — AND по стемам: «воздушный транспорт» не должен
+            # зацепить все виды транспорта из-за общего слова «транспорт».
+            # Несколько ключей пресета по-прежнему объединяются (OR снаружи).
+            # Стемы, которые не бьются ни в один узел («предоставь»), отброшены.
+            if all(stem_hits_text(stem, text) for stem in grounded):
                 matched.add(node_id)
 
     return sorted(matched)
+
+
+def stem_hits_text(stem: str, text: str) -> bool:
+    """Совпадение основы с названием узла: подстрока или общая основа с отличающимся окончанием."""
+    stem_n = _fold_yo(stem)
+    text_n = _fold_yo(text)
+    if stem_n in text_n:
+        return True
+    for word in re.findall(r"[а-яa-z]+", text_n):
+        if len(word) < STEM_MIN_LENGTH:
+            continue
+        if stem_n in word or word in stem_n:
+            return True
+        common = 0
+        for left, right in zip(stem_n, word):
+            if left != right:
+                break
+            common += 1
+        shorter = min(len(stem_n), len(word))
+        if common >= STEM_MIN_LENGTH and common >= shorter - 1:
+            return True
+    return False
+
+
+def _fold_yo(text: str) -> str:
+    return text.lower().replace("ё", "е")

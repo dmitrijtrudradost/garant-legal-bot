@@ -49,30 +49,66 @@ SECURITY_KEYWORDS = ["охран", "лицензир"]
 TAX_KEYWORDS = ["налог", "бухгалт", "бухучет", "бухучёт"]
 
 # Период, за который нужны новости — по словам из текста (в т.ч. с кнопок
-# VK-клавиатуры, см. interfaces/vk/vk_interface.py). Порядок важен: более
-# специфичные варианты ("3 месяца") проверяются раньше общих ("месяц"),
-# иначе "3 месяца" ошибочно распознается как "месяц" (1 подстрока в другой).
+# VK-клавиатуры, см. interfaces/vk/vk_interface.py). Числовой шаблон
+# («за 6 месяцев») проверяется раньше этих правил, иначе «месяц» внутри
+# «6 месяцев» дал бы 30 дней вместо 180. Порядок внутри списка важен:
+# более специфичные варианты ("3 месяца") раньше общих ("месяц").
 PERIOD_RULES: list[tuple[list[str], int]] = [
     (["3 мес", "квартал", "три месяца"], 90),
     (["недел"], 7),
     (["месяц"], 30),
 ]
 
-# Явно указанный период датами (например, с кнопки "Свой период"): "ДД.ММ.ГГГГ-ДД.ММ.ГГГГ".
+_NUMERIC_PERIOD_PATTERN = re.compile(
+    r"за\s+(\d+)\s+(день|дня|дней|недел\w*|мес\w*|год\w*|лет)\b",
+    re.IGNORECASE,
+)
+
+# Явно указанный период датами: "ДД.ММ.ГГГГ-ДД.ММ.ГГГГ".
 # Если он есть в тексте — используется вместо слов-периодов (PERIOD_RULES) и
 # сам по себе делает сообщение новостным запросом, даже без других триггеров.
 CUSTOM_PERIOD_PATTERN = re.compile(
     r"(\d{1,2}\.\d{1,2}\.\d{4})\s*[-–—]\s*(\d{1,2}\.\d{1,2}\.\d{4})"
 )
 
-# Фраза кнопки "📅 Свой период" (interfaces/vk/vk_interface.py) без указанных
-# дат — просьба объяснить пользователю формат, не новостной запрос сам по себе.
-CUSTOM_PERIOD_HELP_PHRASE = "свой период"
-CUSTOM_PERIOD_HELP_TEXT = (
-    "Напишите период в формате ДД.ММ.ГГГГ-ДД.ММ.ГГГГ, например: 01.08.2026-06.09.2026 — "
-    "и я пришлю новости ГАРАНТ ПРАЙМ за это время. Можно уточнить тему словом "
-    "«охрана» или «налоги» в этом же сообщении."
+# Справка в чате (кнопка «Справка» и те же фразы текстом). Не новостной запрос.
+HELP_EXACT_PHRASES = frozenset(
+    {
+        "справка",
+        "помощь",
+        "как пользоваться",
+        "список сфер",
+        "список фильтров",
+    }
 )
+CUSTOM_PERIOD_HELP_PHRASE = "свой период"
+HELP_TEXT = (
+    "Как спросить новости ГАРАНТ ПРАЙМ\n"
+    "\n"
+    "Напишите тему и период — или нажмите кнопку. Кнопки — быстрый путь к частым запросам.\n"
+    "\n"
+    "Приоритет темы:\n"
+    "1. Охрана — если в тексте есть «охрана» или «лицензирование».\n"
+    "2. Названная сфера — например «из сферы строительство» или «воздушный транспорт».\n"
+    "3. Иначе — главные новости по основным сферам.\n"
+    "\n"
+    "Период считается от сегодня: «за неделю», «за месяц», «за 6 месяцев», «за год».\n"
+    "\n"
+    "Свой период: укажите даты в одном сообщении со сферой, "
+    "ДД.ММ.ГГГГ-ДД.ММ.ГГГГ, например 01.08.2026-06.09.2026.\n"
+    "\n"
+    "«ещё» или кнопка «Показать ещё» — следующие 10 новостей из уже найденных.\n"
+    "\n"
+    "Примеры запросов\n"
+    "1. Охранные новости за месяц\n"
+    "2. Новости в сфере образование за 6 месяцев\n"
+    "3. Новости в сфере строительство за период 01.08.2026-10.09.2026\n"
+    "4. Главные новости за неделю"
+)
+HELP_CATALOG_LINK_PREFIX = "Список сфер и фильтров: "
+HELP_CATALOG_UNAVAILABLE = "Список сфер недоступен."
+# Совместимость со старым именем: узкая подсказка про даты заменена полной справкой.
+CUSTOM_PERIOD_HELP_TEXT = HELP_TEXT
 
 # Регион, упомянутый в тексте — сырое ключевое слово в NewsQuery.territory,
 # резолюция по дереву категорий — уже в GarantApiParser (см. докстроку модуля).
@@ -92,8 +128,55 @@ REGION_KEYWORDS: list[tuple[list[str], str]] = [
 # механизмом, что и у готовых пресетов (core/news/category_tree.py), без
 # дополнительного кода здесь.
 CUSTOM_TOPIC_PATTERN = re.compile(r"(?:нов\w*|измен\w*)\s+(?:по|о|об|про)\s+(.+)", re.IGNORECASE)
+SPHERE_TOPIC_PATTERN = re.compile(
+    r"(?:из\s+сферы|по\s+сфере|в\s+сфере|сфера)\s+(.+)", re.IGNORECASE
+)
 _PERIOD_CLAUSE_PATTERN = re.compile(
-    r"\bза\s+(?:\d+\s+)?(?:недел\w*|месяц\w*|квартал\w*|год\w*|дн\w*)\b", re.IGNORECASE
+    r"\bза\s+(?:\d+\s+)?(?:недел\w*|мес\w*|месяц\w*|квартал\w*|год\w*|лет|дн\w*|день|дня|дней|полгода)\b"
+    r"|\bза\s+период\b",
+    re.IGNORECASE,
+)
+_TOPIC_STOP_WORDS = frozenset(
+    {
+        "новости",
+        "новость",
+        "новостей",
+        "изменения",
+        "изменение",
+        "хочу",
+        "узнать",
+        "предоставь",
+        "предоставить",
+        "покажи",
+        "дай",
+        "пришли",
+        "пожалуйста",
+        "нужны",
+        "нужно",
+        "за",
+        "период",
+        "даты",
+        "с",
+        "по",
+        "про",
+        "о",
+        "об",
+        "из",
+        "сферы",
+        "сфере",
+        "сфера",
+        "главные",
+        "законодательстве",
+        "законодательства",
+        "законе",
+        "законам",
+        "закон",
+        "мне",
+        "какие",
+        "что",
+        "там",
+        "есть",
+    }
 )
 
 # Мягкий шлюз перед AI-классификатором: только юридическая/официальная лексика.
@@ -131,7 +214,8 @@ NEWS_CLASSIFY_SYSTEM_PROMPT = (
     "tax — налоги и бухучёт; custom — другая конкретная тема "
     "(тогда custom_topic — краткое название темы); "
     "general — общие главные новости законодательства. "
-    "period_days: 7 неделя, 30 месяц, 90 квартал; если период неясен — null. "
+    "period_days: 7 неделя, 30 месяц, 90 квартал, 180 полгода/N месяцев, 365 год; "
+    "если период неясен — null. "
     "date_from/date_to заполняй только если явно названы конкретные даты. "
     "territory — регион, если назван, иначе null."
 )
@@ -307,12 +391,17 @@ class IntentRouter:
         return " ".join(cleaned.split())
 
     @staticmethod
-    def is_custom_period_help_request(text: str) -> bool:
-        """Нажата кнопка "Свой период" (или написана эта фраза) без реальных дат —
-        нужно объяснить формат, а не пытаться получить новости или отвечать через AI.
-        """
+    def is_help_request(text: str) -> bool:
+        """Кнопка «Справка» или та же просьба текстом — инструкция, не новости и не AI."""
+        if IntentRouter._normalize_exact_phrase(text) in HELP_EXACT_PHRASES:
+            return True
         normalized = text.lower()
         return CUSTOM_PERIOD_HELP_PHRASE in normalized and IntentRouter._extract_custom_range(text) is None
+
+    @staticmethod
+    def is_custom_period_help_request(text: str) -> bool:
+        """Совместимость: «свой период» без дат и остальные фразы справки."""
+        return IntentRouter.is_help_request(text)
 
     @staticmethod
     def _extract_custom_range(text: str) -> tuple[date, date] | None:
@@ -330,15 +419,33 @@ class IntentRouter:
 
     @staticmethod
     def _detect_period_days(normalized: str) -> int:
-        """Определяет период по словам в тексте ("неделю"/"месяц"/"3 месяца"/"квартал").
+        """Период от сегодня: сначала «за N день/недел/мес/год», затем полгода/год, затем прежние слова.
 
         Если период явно не упомянут — используется значение по умолчанию
         (см. `core.news.presets.DEFAULT_LOOKBACK_DAYS`).
         """
+        numeric = _NUMERIC_PERIOD_PATTERN.search(normalized)
+        if numeric:
+            return IntentRouter._numeric_period_to_days(int(numeric.group(1)), numeric.group(2))
+        if "полгода" in normalized or "пол года" in normalized:
+            return 180
+        if re.search(r"(?<!\d)\bгод\b", normalized):
+            return 365
         for stems, days in PERIOD_RULES:
             if any(stem in normalized for stem in stems):
                 return days
         return DEFAULT_LOOKBACK_DAYS
+
+    @staticmethod
+    def _numeric_period_to_days(count: int, unit: str) -> int:
+        lowered = unit.lower()
+        if lowered.startswith("недел"):
+            return 7 * count
+        if lowered.startswith("мес"):
+            return 30 * count
+        if lowered.startswith("год") or lowered.startswith("лет"):
+            return 365 * count
+        return count
 
     @staticmethod
     def _detect_territory(normalized: str) -> str | None:
@@ -351,11 +458,28 @@ class IntentRouter:
 
     @staticmethod
     def _extract_custom_topic(text: str) -> str | None:
-        """Произвольная тема из текста вида "новости по X"/"что нового по X" (см.
-        CUSTOM_TOPIC_PATTERN в докстроке модуля) — MVP, не NLP, конкретные шаблоны фраз."""
-        match = CUSTOM_TOPIC_PATTERN.search(text)
-        if not match:
+        """Тема сферы интересов: шаблоны «из сферы X» / «новости по X», иначе остаток после дат и «за N …»."""
+        for pattern in (SPHERE_TOPIC_PATTERN, CUSTOM_TOPIC_PATTERN):
+            match = pattern.search(text)
+            if match:
+                return IntentRouter._clean_topic_phrase(match.group(1))
+
+        has_period = (
+            IntentRouter._extract_custom_range(text) is not None
+            or _PERIOD_CLAUSE_PATTERN.search(text) is not None
+        )
+        if not has_period:
             return None
-        phrase = _PERIOD_CLAUSE_PATTERN.split(match.group(1), maxsplit=1)[0]
-        phrase = phrase.strip(" \t\n?.!,;:")
-        return phrase or None
+        return IntentRouter._topic_leftover(text)
+
+    @staticmethod
+    def _clean_topic_phrase(phrase: str) -> str | None:
+        return IntentRouter._topic_leftover(phrase)
+
+    @staticmethod
+    def _topic_leftover(text: str) -> str | None:
+        cleaned = CUSTOM_PERIOD_PATTERN.sub(" ", text)
+        cleaned = _PERIOD_CLAUSE_PATTERN.sub(" ", cleaned)
+        words = re.findall(r"[а-яёa-z]+", cleaned.lower())
+        kept = [word for word in words if word not in _TOPIC_STOP_WORDS and len(word) >= 4]
+        return " ".join(kept) or None

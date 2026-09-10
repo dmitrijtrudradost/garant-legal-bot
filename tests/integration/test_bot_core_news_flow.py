@@ -89,6 +89,83 @@ async def test_custom_period_button_without_dates_returns_help_instead_of_news_o
 
 
 @pytest.mark.asyncio
+async def test_help_request_does_not_fetch_news():
+    news_parser = FakeNewsParser([NewsItem(title="Не должно попасть", summary="x")])
+    bot_core = make_bot_core(news_parser)
+
+    outgoing = await bot_core.handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="справка", interface="vk")
+    )
+
+    assert "Как спросить новости" in outgoing.text
+    assert "Новости в сфере образование за 6 месяцев" in outgoing.text
+    assert news_parser.received_query is None
+    assert outgoing.catalog_html is None
+
+
+@pytest.mark.asyncio
+async def test_help_attaches_catalog_html_when_parser_has_tree(
+    garant_api_categories_branched_sample, monkeypatch, tmp_path
+):
+    class TreeNewsParser(FakeNewsParser):
+        async def get_category_tree(self):
+            return garant_api_categories_branched_sample["categories"]
+
+    async def fake_html_to_pdf(html: str) -> bytes:
+        assert "Воздушный транспорт" in html
+        return b"%PDF-1.4 catalog-test"
+
+    monkeypatch.setattr("core.bot_core.html_to_pdf", fake_html_to_pdf)
+    monkeypatch.setattr("core.news.catalog_html.CATALOG_HTML_PATH", tmp_path / "garant-sfery-i-filtry.html")
+    monkeypatch.setattr("core.news.catalog_html.CATALOG_PDF_PATH", tmp_path / "garant-sfery-i-filtry.pdf")
+
+    news_parser = TreeNewsParser([])
+    bot_core = make_bot_core(news_parser)
+
+    outgoing = await bot_core.handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="Справка", interface="vk")
+    )
+
+    assert outgoing.catalog_html is not None
+    assert outgoing.catalog_pdf == b"%PDF-1.4 catalog-test"
+    assert "viewport" in outgoing.catalog_html
+    assert "Воздушный транспорт" in outgoing.catalog_html
+    assert "Список сфер недоступен" not in outgoing.text
+    html_path = tmp_path / "garant-sfery-i-filtry.html"
+    pdf_path = tmp_path / "garant-sfery-i-filtry.pdf"
+    assert html_path.is_file()
+    assert pdf_path.is_file()
+    assert "Воздушный транспорт" in html_path.read_text(encoding="utf-8")
+    assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+@pytest.mark.asyncio
+async def test_help_uses_docs_pdf_when_playwright_fails(
+    garant_api_categories_branched_sample, monkeypatch, tmp_path
+):
+    class TreeNewsParser(FakeNewsParser):
+        async def get_category_tree(self):
+            return garant_api_categories_branched_sample["categories"]
+
+    async def failing_html_to_pdf(html: str) -> bytes:
+        raise RuntimeError("no chromium")
+
+    fallback_pdf = tmp_path / "garant-sfery-i-filtry.pdf"
+    fallback_pdf.write_bytes(b"%PDF-1.4 from-docs")
+
+    monkeypatch.setattr("core.bot_core.html_to_pdf", failing_html_to_pdf)
+    monkeypatch.setattr("core.bot_core.CATALOG_PDF_PATH", fallback_pdf)
+    monkeypatch.setattr("core.news.catalog_html.CATALOG_HTML_PATH", tmp_path / "catalog.html")
+
+    outgoing = await make_bot_core(TreeNewsParser([])).handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="Справка", interface="vk")
+    )
+
+    assert outgoing.catalog_html is not None
+    assert outgoing.catalog_pdf == b"%PDF-1.4 from-docs"
+
+
+@pytest.mark.asyncio
 async def test_custom_period_with_dates_goes_to_news_flow():
     news_parser = FakeNewsParser(
         [NewsItem(title="Новый закон", summary="Описание", published_at=date(2026, 8, 15))]

@@ -162,8 +162,8 @@ DOCUMENT_URL_BASE = "https://internet.garant.ru"
 MAX_CHUNK_DAYS = 10
 """Жёсткий лимит API: toDate - fromDate не должен превышать это число дней (иначе 400)."""
 
-MAX_CHUNKS_PER_FETCH = 12
-"""Верхний предел числа интервалов на один вызов fetch() (≈4 месяца по 10 дней).
+MAX_CHUNKS_PER_FETCH = 19
+"""Верхний предел числа интервалов на один вызов fetch() (≈6 месяцев по 10 дней).
 
 Если запрошенный период после разбиения требует больше интервалов — берутся
 только последние (ближайшие к сегодняшней дате) MAX_CHUNKS_PER_FETCH, период
@@ -235,6 +235,13 @@ class GarantApiParser(NewsParser):
             return []
 
         category_ids = await self._resolve_category_ids_for_query(query)
+        if not category_ids:
+            logger.warning(
+                "GarantApiParser: тема %s не совпала с деревом категорий — запрос к ленте не выполняется.",
+                query.topic,
+            )
+            return []
+
         chunks = self._split_into_chunks(date_from, query.date_to)
 
         raw_news: list[dict] = []
@@ -338,26 +345,34 @@ class GarantApiParser(NewsParser):
 
     @staticmethod
     def _resolve_topic_ids(categories: list[dict], topics: list[str] | None) -> list[int]:
-        """Сопоставляет темы (`NewsQuery.topic`) с ID ветки «Сфера интересов» (п.1 докстроки модуля).
+        """Сопоставляет темы (`NewsQuery.topic`) с ID ветки «Сфера интересов».
 
-        В отличие от territory/info_type, у topic сохранён fallback на все
-        корневые категории при отсутствии совпадений — историческое поведение
-        (`categories` обязателен и не может быть пустым)."""
-        root_ids = [node["id"] for node in categories]
+        Несовпадение не подменяется id осей дерева («Вид информации» / «Сфера
+        интересов») — они дают 404 на create-news. Пустой список означает:
+        fetch() не вызывает API."""
         if not topics:
-            return root_ids
+            return GarantApiParser._interest_category_ids(categories)
 
         matched = category_tree.resolve_categories(categories, topics, branch=category_tree.BRANCH_INTEREST)
         if not matched:
             logger.warning(
                 "GarantApiParser: ни одна тема (%s) не совпала с деревом категорий API — "
-                "использую все корневые категории (%s) как максимально широкий fallback.",
+                "запрос к ленте не выполняется.",
                 topics,
-                root_ids,
             )
-            return root_ids
+            return []
 
         return matched
+
+    @staticmethod
+    def _interest_category_ids(categories: list[dict]) -> list[int]:
+        """ID узлов ветки «Сфера интересов» (не сами оси верхнего уровня).
+
+        Если ветки нет (плоская фикстура) — все id дерева, как раньше для fallback.
+        """
+        children = category_tree.find_branch_children(categories, category_tree.BRANCH_INTEREST)
+        pool = children if children is not None else categories
+        return sorted({node_id for _, node_id in category_tree.walk_nodes(pool) if node_id is not None})
 
     async def _ensure_category_tree(self, *, force_refresh: bool = False) -> dict:
         if self._category_tree is None or force_refresh:
@@ -367,6 +382,16 @@ class GarantApiParser(NewsParser):
     async def refresh_category_tree(self) -> dict:
         """Принудительно обновляет кэш дерева категорий (см. п.1 докстроки модуля)."""
         return await self._ensure_category_tree(force_refresh=True)
+
+    async def get_category_tree(self) -> list[dict] | None:
+        """Ветки GET /v2/prime для HTML-справки. None, если дерево пустое или запрос не удался."""
+        try:
+            tree = await self._ensure_category_tree()
+        except GarantApiError as exc:
+            logger.warning("GarantApiParser: не удалось получить дерево категорий для справки: %s", exc)
+            return None
+        categories = tree.get("categories") or []
+        return categories or None
 
     # -- Ограничения периода ----------------------------------------------
 
@@ -430,16 +455,18 @@ class GarantApiParser(NewsParser):
             if not allow_category_fallback:
                 raise
             tree = await self._ensure_category_tree()
-            root_ids = [node["id"] for node in tree.get("categories", [])]
+            fallback_ids = self._interest_category_ids(tree.get("categories", []))
+            if not fallback_ids or fallback_ids == category_ids:
+                raise
             logger.warning(
                 "GarantApiParser: категории %s не найдены (404) для периода %s — %s — "
-                "повторяю запрос с корневыми категориями %s.",
+                "повторяю запрос с категориями ветки «Сфера интересов» %s.",
                 category_ids,
                 date_from,
                 date_to,
-                root_ids,
+                fallback_ids,
             )
-            return await self._fetch_chunk(root_ids, date_from, date_to, allow_category_fallback=False)
+            return await self._fetch_chunk(fallback_ids, date_from, date_to, allow_category_fallback=False)
 
         return data.get("news", [])
 
