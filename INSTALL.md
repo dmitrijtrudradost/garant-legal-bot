@@ -14,7 +14,11 @@
 |---|---|---|
 | `VK_TOKEN` | да | Токен сообщества ВКонтакте: https://vk.com/editapp?act=create → создать сообщество → в настройках сообщества включить "Сообщения" → LongPoll API → выпустить токен |
 | `PROXYAPI_KEY` | да | Регистрация на https://proxyapi.ru → личный кабинет → API-ключ |
-| `GARANT_LOGIN`, `GARANT_PASSWORD` | нет (опционально) | Логин/пароль для входа на demo.garant.ru — нужны только для модуля новостей ГАРАНТ ПРАЙМ. Без них бот работает как обычно, на новостной запрос ответит "изменений не найдено" |
+| `GARANT_LOGIN`, `GARANT_PASSWORD` | нет (опционально) | Логин/пароль для входа на demo.garant.ru — режим "browser" модуля новостей ГАРАНТ ПРАЙМ |
+| `GARANT_TOKEN` | нет (опционально) | Токен официального API ГАРАНТ Коннект (`https://api.garant.ru`) — режим "api" модуля новостей ГАРАНТ ПРАЙМ |
+| `GARANT_MODE` | нет (опционально) | `browser`/`api`/`mcp` — явный выбор режима новостей; без него режим определяется автоматически по тому, что заполнено выше (см. README, раздел "Модуль новостей ГАРАНТ ПРАЙМ") |
+
+Без `GARANT_LOGIN`/`GARANT_PASSWORD`/`GARANT_TOKEN` бот работает как обычно, на новостной запрос ответит "изменений не найдено".
 
 Без этих значений под рукой запускать бота бессмысленно — подготовьте их перед началом установки.
 
@@ -80,9 +84,11 @@ playwright install chromium
 VK_TOKEN=ваш_токен_сообщества
 PROXYAPI_KEY=ваш_ключ_proxyapi
 
-# Опционально, для модуля новостей ГАРАНТ ПРАЙМ:
+# Опционально, для модуля новостей ГАРАНТ ПРАЙМ — режим browser и/или api:
 GARANT_LOGIN=
 GARANT_PASSWORD=
+GARANT_TOKEN=
+GARANT_MODE=
 ```
 
 ### 7. Проверить токены перед запуском
@@ -180,6 +186,8 @@ VK_TOKEN=ваш_токен_сообщества
 PROXYAPI_KEY=ваш_ключ_proxyapi
 GARANT_LOGIN=
 GARANT_PASSWORD=
+GARANT_TOKEN=
+GARANT_MODE=
 ```
 
 Сохранить (`Ctrl+O`, `Enter`, `Ctrl+X` в nano). Проверить, что файл не попадёт в git (`.gitignore` уже это учитывает).
@@ -282,7 +290,7 @@ sudo systemctl restart vkbot      # если используется systemd
 |---|---|
 | `test_bot.py` пишет `[FAIL] VK Token` | Неверный или просроченный `VK_TOKEN` — перевыпустить в настройках сообщества |
 | `test_bot.py` пишет `[FAIL] ProxyAPI` | Неверный `PROXYAPI_KEY` или закончился баланс на proxyapi.ru |
-| При новостном запросе всегда «изменений не найдено» | Не заданы `GARANT_LOGIN`/`GARANT_PASSWORD`, либо разметка сайта demo.garant.ru ещё не до конца подтверждена (см. `TODO` в `core/news/parser.py` и раздел "Известные ограничения" в `README.md`) |
+| При новостном запросе всегда «изменений не найдено» | Не заданы ни `GARANT_LOGIN`/`GARANT_PASSWORD` (режим browser), ни `GARANT_TOKEN` (режим api), либо явно указанный `GARANT_MODE` не совпадает с заданными переменными (см. раздел "Модуль новостей ГАРАНТ ПРАЙМ" в `README.md`); для режима browser также возможна ещё не до конца подтверждённая разметка сайта demo.garant.ru (см. `TODO` в `core/news/parser_browser.py`) |
 | Ошибка Playwright `Executable doesn't exist` | Не выполнен `playwright install chromium` (Windows) или `playwright install --with-deps chromium` (Linux) |
 | На Windows в консоли (`--console`) кириллица выглядит как знаки вопроса/иероглифы | Кодировка терминала — сам интерфейс принудительно переключает stdin/stdout в UTF-8, но при пайпе через сторонние оболочки (например git-bash) вывод самого терминала может остаться в другой кодировке — на поведение бота это не влияет |
 | Бот в systemd постоянно перезапускается (`Restart=on-failure` крутится) | Смотреть `journalctl -u vkbot -f` — почти всегда неверный путь в `WorkingDirectory`/`ExecStart` или отсутствующий `.env` |

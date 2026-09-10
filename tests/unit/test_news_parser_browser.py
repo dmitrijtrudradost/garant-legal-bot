@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from core.models import NewsItem, NewsQuery
-from core.news.parser import GarantPrimeParser
+from core.news.parser_browser import GarantPrimeParser
 
 
 def test_parse_html_extracts_news_items(garant_prime_sample_html):
@@ -96,7 +96,7 @@ async def test_fetch_retries_after_cooldown_elapsed(monkeypatch):
         return "<html></html>"
 
     monkeypatch.setattr(parser, "_render_page", fake_render_page)
-    monkeypatch.setattr("core.news.parser.time.monotonic", lambda: fake_now[0])
+    monkeypatch.setattr("core.news.parser_browser.time.monotonic", lambda: fake_now[0])
 
     await parser.fetch(_make_query())
     fake_now[0] += GarantPrimeParser.MIN_SECONDS_BETWEEN_LOGINS + 1

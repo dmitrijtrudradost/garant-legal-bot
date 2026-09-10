@@ -20,10 +20,11 @@ from core.dialogue_service import DialogueService
 from core.history import InMemoryDialogueHistory
 from core.intent_router import IntentRouter
 from core.news.formatter import NewsFormatter
-from core.news.parser import GarantPrimeParser
+from core.news.parser_factory import GarantModeConfigError, NullNewsParser, get_news_parser
 from interfaces.base import BaseInterface
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def build_bot_core() -> BotCore:
@@ -31,10 +32,15 @@ def build_bot_core() -> BotCore:
     history = InMemoryDialogueHistory()
     dialogue_service = DialogueService(history, ai_client)
 
-    news_parser = GarantPrimeParser(
-        login=os.getenv("GARANT_LOGIN", ""),
-        password=os.getenv("GARANT_PASSWORD", ""),
-    )
+    try:
+        news_parser = get_news_parser()
+    except GarantModeConfigError as exc:
+        # Явный режим (или mcp) указан, но не может быть использован — громко
+        # логируем и продолжаем работу без новостного модуля, а не роняем бота
+        # целиком (см. докстроку core/news/parser_factory.py).
+        logger.error("Конфигурация новостного модуля ГАРАНТ: %s", exc)
+        news_parser = NullNewsParser()
+
     news_formatter = NewsFormatter()
     intent_router = IntentRouter()
 

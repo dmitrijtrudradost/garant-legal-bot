@@ -1,4 +1,10 @@
-"""NewsParser — интерфейс + GarantPrimeParser (реализация для demo.garant.ru).
+"""GarantPrimeParser — реализация NewsParser через headless-браузер (demo.garant.ru).
+
+Перенесено из бывшего `core/news/parser.py` при реструктуризации пакета
+`core/news/` под несколько режимов подключения (см. ТЗ
+`tz/tz-garant-api-dual-mode.md`, раздел 3) — логика класса не менялась,
+только имя файла и то, откуда импортируется интерфейс `NewsParser`
+(теперь `parser_base.py`).
 
 Архитектурная развилка (см. ТЗ п. 3.1) и её решение
 -----------------------------------------------------
@@ -14,10 +20,12 @@
 на demo.garant.ru по логину/паролю из .env (GARANT_LOGIN/GARANT_PASSWORD),
 рендеринг SPA и разбор отрендеренного DOM.
 
-Если в будущем появится доступ к официальному API (вариант А), нужно
-реализовать новый класс, удовлетворяющий интерфейсу NewsParser (HTTP-клиент
-к API вместо браузера) — остальной код (DialogueService, BotCore,
-интерфейсы) менять не придётся, т.к. они зависят только от NewsParser.fetch().
+С появлением доступа к официальному API (вариант А) реализован
+альтернативный класс `GarantApiParser` (`core/news/parser_api.py`),
+удовлетворяющий тому же интерфейсу `NewsParser` — остальной код
+(DialogueService, BotCore, интерфейсы) не менялся, т.к. они зависят
+только от `NewsParser.fetch()`. Выбор между режимами — в
+`core/news/parser_factory.py`.
 
 Статус проверки (эмпирически, на реальном demo-аккаунте): вход по логину и
 паролю, переход на вкладку «Новости ПРАЙМ» (ленту «Общая лента ПРАЙМ») и
@@ -70,22 +78,14 @@ import asyncio
 import logging
 import re
 import time
-from abc import ABC, abstractmethod
 from datetime import date
 
 from core.models import NewsItem, NewsQuery
+from core.news.parser_base import NewsParser
 
 logger = logging.getLogger(__name__)
 
 GARANT_BASE_URL = "https://demo.garant.ru/#/startpage:1"
-
-
-class NewsParser(ABC):
-    """Контракт источника новостей — не зависит от способа получения данных."""
-
-    @abstractmethod
-    async def fetch(self, query: NewsQuery) -> list[NewsItem]:
-        """Вернуть список новостей, подходящих под фильтры query."""
 
 
 class GarantPrimeParser(NewsParser):
@@ -106,6 +106,8 @@ class GarantPrimeParser(NewsParser):
     """
 
     MIN_SECONDS_BETWEEN_LOGINS = 60
+    KEYSTROKE_DELAY_MS = 40
+    """Пауза (мс) между символами при посимвольном вводе логина/пароля — см. `_type_into`."""
 
     def __init__(self, login: str, password: str, *, base_url: str = GARANT_BASE_URL) -> None:
         self._login = login
@@ -260,11 +262,18 @@ class GarantPrimeParser(NewsParser):
         Обычный `locator.fill()`/`locator.type()` не работает с полями логина
         на account.garant.ru — значение сбрасывается React-компонентом
         (подтверждено эмпирически, см. докстроку `_render_page`).
+
+        Небольшая пауза между нажатиями (см. `KEYSTROKE_DELAY_MS`) — эмпирическая
+        находка 09.09.2026 (аудит фильтров, `docs/garant-site-filters-audit.md`):
+        без паузы React иногда не успевает обработать нажатие и теряет один
+        символ (например, вместо 4-значного пароля до поля доходит 3 символа,
+        сайт отвечает "Неверные данные") — редкая, но реальная флуктуация.
         """
         locator = page.locator(selector)
         await locator.click()
         for char in text:
             await page.keyboard.press(char)
+            await page.wait_for_timeout(GarantPrimeParser.KEYSTROKE_DELAY_MS)
 
     @staticmethod
     async def _simulate_human_pause(page) -> None:
