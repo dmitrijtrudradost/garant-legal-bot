@@ -11,7 +11,13 @@ from core.news.parser_factory import GarantModeConfigError, NullNewsParser, get_
 
 
 def _clear_env(monkeypatch) -> None:
-    for name in ("GARANT_MODE", "GARANT_TOKEN", "GARANT_LOGIN", "GARANT_PASSWORD"):
+    for name in (
+        "GARANT_MODE",
+        "GARANT_TOKEN",
+        "GARANT_LOGIN",
+        "GARANT_PASSWORD",
+        "GARANT_BROWSER_BASE_URL",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -27,6 +33,7 @@ def test_explicit_mode_browser_creates_garant_prime_parser(monkeypatch):
     parser = get_news_parser()
 
     assert isinstance(parser, GarantPrimeParser)
+    assert parser._base_url == "https://internet.garant.ru/#/startpage:1"
 
 
 def test_explicit_mode_api_creates_garant_api_parser(monkeypatch):
@@ -93,6 +100,20 @@ def test_autodetect_falls_back_to_browser_when_only_credentials_set(monkeypatch)
     parser = get_news_parser()
 
     assert isinstance(parser, GarantPrimeParser)
+    assert parser._base_url == "https://internet.garant.ru/#/startpage:1"
+
+
+def test_browser_parser_uses_custom_base_url(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("GARANT_MODE", "browser")
+    monkeypatch.setenv("GARANT_LOGIN", "login")
+    monkeypatch.setenv("GARANT_PASSWORD", "password")
+    monkeypatch.setenv("GARANT_BROWSER_BASE_URL", "https://demo.garant.ru")
+
+    parser = get_news_parser()
+
+    assert isinstance(parser, GarantPrimeParser)
+    assert parser._base_url == "https://demo.garant.ru/#/startpage:1"
 
 
 @pytest.mark.asyncio

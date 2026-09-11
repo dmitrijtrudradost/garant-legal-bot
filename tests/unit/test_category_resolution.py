@@ -63,6 +63,10 @@ def test_resolve_categories_no_match_returns_empty_list(garant_api_categories_br
 
 def test_extract_stems_drops_generic_blocklisted_word():
     assert "деятельность" not in category_tree.extract_stems("Частная сыскная и охранная деятельность")
+    assert "деятельность" in category_tree.extract_stems(
+        "Частная сыскная и охранная деятельность", ignore_generic=False
+    )
+
 
 
 def test_extract_stems_keeps_blocklisted_word_if_it_is_the_only_word():

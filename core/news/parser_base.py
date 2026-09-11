@@ -14,6 +14,14 @@ from abc import ABC, abstractmethod
 from core.models import NewsItem, NewsQuery
 
 
+class NewsSourceBusyError(Exception):
+    """Источник временно недоступен (alreadyused, кулдаун входа). Это не пустая лента."""
+
+    def __init__(self, message: str = "", *, retry_after_seconds: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
 class NewsParser(ABC):
     """Контракт источника новостей — не зависит от способа получения данных."""
 

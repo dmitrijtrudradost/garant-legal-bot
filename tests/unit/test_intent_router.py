@@ -82,8 +82,14 @@ def test_route_six_months_uses_security_preset_not_custom_topic():
 
 def test_route_recognizes_button_labels():
     """Кнопки VK-клавиатуры (interfaces/vk/vk_interface.py) шлют такие тексты сообщением."""
-    for label in ["🛡 Охрана — месяц", "📋 Главные новости — месяц"]:
-        assert router.route(label) is not None, f"кнопка {label!r} не распознана как новостной запрос"
+    security = router.route("🛡 Охрана — месяц")
+    main = router.route("📋 Главные новости — месяц")
+    assert security is not None
+    assert main is not None
+    assert (security.date_to - security.date_from).days == 30
+    assert (main.date_to - main.date_from).days == 30
+    assert len(security.topic) == 1
+    assert len(main.topic) > 1
 
 
 def test_route_help_button_is_not_a_news_request():

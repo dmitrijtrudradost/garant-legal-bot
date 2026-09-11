@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>фильтры internet.garant.ru (срез 2026-09-10)</title></head>
+<body>
+<!-- Упрощённый срез панели internet.garant.ru 10.09.2026: те же подписи и
+     name=from/to. Модалка — статическая (без ExtJS). Валидна для офлайн-тестов
+     селекторов по тексту; live-разметка demo в этот день не снята. -->
+<fieldset>
+  <div class="x-fieldset-header-text">Дата документа</div>
+  <label id="radio-week">За неделю</label>
+  <label id="radio-month">За месяц</label>
+  <label>За период</label>
+  <input name="from" type="text" placeholder="дд.мм.гггг">
+  <input name="to" type="text" placeholder="дд.мм.гггг">
+</fieldset>
+<fieldset>
+  <div class="x-fieldset-header-text">Вид информации</div>
+  <label class="x-form-cb-label">Федеральные акты</label>
+  <span class="full-list" data-axis="info" data-clicked="0">Полный список</span>
+</fieldset>
+<fieldset>
+  <div class="x-fieldset-header-text">Тема</div>
+  <label class="x-form-cb-label">Налоги и сборы</label>
+  <label class="x-form-cb-label">Частная сыскная и охранная деятельность</label>
+  <label class="x-form-cb-label">Образование</label>
+  <span class="full-list" data-axis="topic" data-clicked="0">Полный список</span>
+</fieldset>
+<fieldset>
+  <div class="x-fieldset-header-text">Территория</div>
+  <label class="x-form-cb-label">г.Москва</label>
+  <span class="full-list" data-axis="territory" data-clicked="0">Полный список</span>
+</fieldset>
+<button id="apply">Применить фильтры</button>
+<a class="x-btn resetFilter" id="panel-reset">Cбросить фильтры</a>
+<div class="x-window">
+  <div>Тема</div>
+  <input placeholder="Поиск">
+  <input placeholder="Фильтр">
+  <label class="x-form-cb-label">Частная сыскная и охранная деятельность</label>
+  <label class="x-form-cb-label">Налоги и сборы</label>
+  <label class="x-form-cb-label">г.Москва</label>
+  <label class="x-form-cb-label">Федеральные акты</label>
+  <button type="button">Выбрать</button>
+  <button type="button">Отмена</button>
+</div>
+<div class="primeDate">10 сентября 2026</div>
+<div class="primeDocument"><div class="documentTitle"><a href="/#/document/1">Пример</a></div></div>
+<script>
+document.querySelectorAll(".full-list").forEach(function (el) {
+  el.addEventListener("click", function () {
+    el.dataset.clicked = String(Number(el.dataset.clicked || "0") + 1);
+  });
+});
+["radio-week", "radio-month"].forEach(function (id) {
+  document.getElementById(id).addEventListener("click", function () {
+    this.dataset.clicked = "1";
+  });
+});
+document.getElementById("apply").addEventListener("click", function () {
+  this.dataset.clicked = "1";
+  if (!document.body.innerText.includes("Лента отфильтрована")) {
+    var banner = document.createElement("div");
+    banner.textContent = "Лента отфильтрована";
+    document.body.appendChild(banner);
+  }
+});
+</script>
+</body>
+</html>
