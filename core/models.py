@@ -58,8 +58,9 @@ class NewsQuery:
     по дереву категорий ГАРАНТ (`core/news/category_tree.py`) — `topic` ищется
     в ветке «Сфера интересов», `territory`/`info_type` — в ветке «Вид
     информации» (см. ТЗ tz-garant-news-filtering.md, разделы 1-3.3, и
-    докстроку `GarantApiParser`). `GarantPrimeParser` (режим `browser`) эти
-    поля пока не применяет вообще (см. TODO в `parser_browser.py`).
+    докстроку `GarantApiParser`). `GarantPrimeParser` (режим `browser`)
+    выставляет те же поля через UI сайта: период, тему; территорию и вид
+    информации — только если темы нет (см. `_apply_filters`).
 
     `authority`/`doc_type`/`keywords` — НЕ применяются ни одним из текущих
     парсеров (см. пояснения у каждого поля ниже); поля оставлены в

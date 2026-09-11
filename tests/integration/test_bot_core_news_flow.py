@@ -2,13 +2,19 @@ from datetime import date, timedelta
 
 import pytest
 
-from core.bot_core import BotCore, SHOW_MORE_EXHAUSTED_TEXT, SHOW_MORE_NO_RESULTS_TEXT
+from core.bot_core import (
+    BotCore,
+    SHOW_MORE_EXHAUSTED_TEXT,
+    SHOW_MORE_NO_RESULTS_TEXT,
+    news_source_busy_text,
+)
 from core.dialogue_service import DialogueService
 from core.history import InMemoryDialogueHistory
 from core.intent_router import IntentRouter
 from core.models import IncomingMessage, NewsItem
 from core.news.formatter import NewsFormatter
 from core.news.results_cache import InMemoryNewsResultsCache
+from core.news.parser_base import NewsSourceBusyError
 
 
 class FakeAIClient:
@@ -77,6 +83,41 @@ async def test_news_source_failure_returns_friendly_message():
 
 
 @pytest.mark.asyncio
+async def test_news_source_busy_is_not_empty_feed():
+    class BusyNewsParser:
+        MIN_SECONDS_BETWEEN_LOGINS = 60
+
+        async def fetch(self, query):
+            raise NewsSourceBusyError("alreadyused", retry_after_seconds=self.MIN_SECONDS_BETWEEN_LOGINS)
+
+    bot_core = make_bot_core(BusyNewsParser())
+    outgoing = await bot_core.handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="Что нового по охране?", interface="console")
+    )
+
+    assert outgoing.text == news_source_busy_text(60)
+    assert "1 минуту" in outgoing.text
+    assert "не найдено" not in outgoing.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_news_source_busy_wait_text_follows_cooldown_variable():
+    class BusyNewsParser:
+        MIN_SECONDS_BETWEEN_LOGINS = 120
+
+        async def fetch(self, query):
+            raise NewsSourceBusyError(retry_after_seconds=self.MIN_SECONDS_BETWEEN_LOGINS)
+
+    bot_core = make_bot_core(BusyNewsParser())
+    outgoing = await bot_core.handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="Что нового по охране?", interface="console")
+    )
+
+    assert outgoing.text == news_source_busy_text(120)
+    assert "2 минуты" in outgoing.text
+
+
+@pytest.mark.asyncio
 async def test_custom_period_button_without_dates_returns_help_instead_of_news_or_dialogue():
     news_parser = FakeNewsParser([])  # не должен быть вызван вовсе
     bot_core = make_bot_core(news_parser)
@@ -100,7 +141,8 @@ async def test_help_request_does_not_fetch_news():
     assert "Как спросить новости" in outgoing.text
     assert "Новости в сфере образование за 6 месяцев" in outgoing.text
     assert news_parser.received_query is None
-    assert outgoing.catalog_html is None
+    assert "Список сфер недоступен" not in outgoing.text
+    assert outgoing.catalog_html or outgoing.catalog_pdf
 
 
 @pytest.mark.asyncio
@@ -163,6 +205,38 @@ async def test_help_uses_docs_pdf_when_playwright_fails(
 
     assert outgoing.catalog_html is not None
     assert outgoing.catalog_pdf == b"%PDF-1.4 from-docs"
+
+
+@pytest.mark.asyncio
+async def test_help_without_api_tree_uses_saved_docs_catalog(monkeypatch, tmp_path):
+    html_path = tmp_path / "garant-sfery-i-filtry.html"
+    pdf_path = tmp_path / "garant-sfery-i-filtry.pdf"
+    html_path.write_text("<html>сохранённый каталог сфер</html>", encoding="utf-8")
+    pdf_path.write_bytes(b"%PDF-1.4 saved")
+    monkeypatch.setattr("core.bot_core.CATALOG_HTML_PATH", html_path)
+    monkeypatch.setattr("core.bot_core.CATALOG_PDF_PATH", pdf_path)
+
+    outgoing = await make_bot_core(FakeNewsParser([])).handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="Справка", interface="vk")
+    )
+
+    assert "Список сфер недоступен" not in outgoing.text
+    assert outgoing.catalog_html == "<html>сохранённый каталог сфер</html>"
+    assert outgoing.catalog_pdf == b"%PDF-1.4 saved"
+
+
+@pytest.mark.asyncio
+async def test_help_without_api_or_files_says_catalog_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.bot_core.CATALOG_HTML_PATH", tmp_path / "missing.html")
+    monkeypatch.setattr("core.bot_core.CATALOG_PDF_PATH", tmp_path / "missing.pdf")
+
+    outgoing = await make_bot_core(FakeNewsParser([])).handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="Справка", interface="vk")
+    )
+
+    assert "Список сфер недоступен" in outgoing.text
+    assert outgoing.catalog_html is None
+    assert outgoing.catalog_pdf is None
 
 
 @pytest.mark.asyncio

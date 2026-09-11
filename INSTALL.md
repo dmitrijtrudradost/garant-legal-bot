@@ -14,7 +14,8 @@
 |---|---|---|
 | `VK_TOKEN` | да | Токен сообщества ВКонтакте: https://vk.com/editapp?act=create → создать сообщество → в настройках сообщества включить "Сообщения" → LongPoll API → выпустить токен |
 | `PROXYAPI_KEY` | да | Регистрация на https://proxyapi.ru → личный кабинет → API-ключ |
-| `GARANT_LOGIN`, `GARANT_PASSWORD` | нет (опционально) | Логин/пароль для входа на demo.garant.ru — режим "browser" модуля новостей ГАРАНТ ПРАЙМ |
+| `GARANT_LOGIN`, `GARANT_PASSWORD` | нет (опционально) | Логин/пароль SSO `account.garant.ru` — режим `browser` |
+| `GARANT_BROWSER_BASE_URL` | нет | Лента browser, по умолчанию `https://internet.garant.ru`. Для демо: `https://demo.garant.ru` |
 | `GARANT_TOKEN` | нет (опционально) | Токен официального API ГАРАНТ Коннект (`https://api.garant.ru`) — режим "api" модуля новостей ГАРАНТ ПРАЙМ |
 | `GARANT_MODE` | нет (опционально) | `browser`/`api`/`mcp` — явный выбор режима новостей; без него режим определяется автоматически по тому, что заполнено выше (см. README, раздел "Модуль новостей ГАРАНТ ПРАЙМ") |
 
@@ -89,6 +90,7 @@ GARANT_LOGIN=
 GARANT_PASSWORD=
 GARANT_TOKEN=
 GARANT_MODE=
+GARANT_BROWSER_BASE_URL=https://internet.garant.ru
 ```
 
 ### 7. Прогнать автотесты (опционально, но рекомендуется)
@@ -180,6 +182,7 @@ GARANT_LOGIN=
 GARANT_PASSWORD=
 GARANT_TOKEN=
 GARANT_MODE=
+GARANT_BROWSER_BASE_URL=https://internet.garant.ru
 ```
 
 Сохранить (`Ctrl+O`, `Enter`, `Ctrl+X` в nano). Проверить, что файл не попадёт в git (`.gitignore` уже это учитывает).
@@ -281,7 +284,7 @@ sudo systemctl restart vkbot      # если используется systemd
 |---|---|
 | Бот не отвечает или VK API возвращает ошибку авторизации | Неверный или просроченный `VK_TOKEN` — перевыпустить в настройках сообщества |
 | Диалог с AI не работает / ошибка ProxyAPI | Неверный `PROXYAPI_KEY` или закончился баланс на proxyapi.ru |
-| При новостном запросе всегда «изменений не найдено» | Не заданы ни `GARANT_LOGIN`/`GARANT_PASSWORD` (режим browser), ни `GARANT_TOKEN` (режим api), либо явно указанный `GARANT_MODE` не совпадает с заданными переменными (см. раздел "Модуль новостей ГАРАНТ ПРАЙМ" в `README.md`); для режима browser также возможна ещё не до конца подтверждённая разметка сайта demo.garant.ru (см. `TODO` в `core/news/parser_browser.py`) |
+| При новостном запросе всегда «изменений не найдено» | Не заданы ни `GARANT_LOGIN`/`GARANT_PASSWORD` (режим browser), ни `GARANT_TOKEN` (режим api), либо явно указанный `GARANT_MODE` не совпадает с заданными переменными (см. README, «Модуль новостей»). Для browser: кулдаун alreadyused, пустая лента по фильтрам («Ничего не найдено»), либо `demo.garant.ru` без рабочей лицензии — рабочий origin задаётся `GARANT_BROWSER_BASE_URL` |
 | Ошибка Playwright `Executable doesn't exist` | Не выполнен `playwright install chromium` (Windows) или `playwright install --with-deps chromium` (Linux) |
 | На Windows в консоли (`--console`) кириллица выглядит как знаки вопроса/иероглифы | Кодировка терминала — сам интерфейс принудительно переключает stdin/stdout в UTF-8, но при пайпе через сторонние оболочки (например git-bash) вывод самого терминала может остаться в другой кодировке — на поведение бота это не влияет |
 | Бот в systemd постоянно перезапускается (`Restart=on-failure` крутится) | Смотреть `journalctl -u vkbot -f` — почти всегда неверный путь в `WorkingDirectory`/`ExecStart` или отсутствующий `.env` |

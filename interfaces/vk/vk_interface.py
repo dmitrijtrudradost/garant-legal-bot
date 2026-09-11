@@ -7,12 +7,18 @@
 её текст руками (см. core/intent_router.py и тесты на эти же лейблы).
 Каталог сфер печатается в PDF (VK не принимает HTML) и загружается как
 документ сообщества — в текст справки добавляется ссылка `https://vk.com/doc…`.
+Первая загрузка на upload-сервер VK иногда отвечает пустым телом
+(JSONDecodeError) или `no_free_space` — повторяем попытку и переиспользуем
+уже сохранённую ссылку, чтобы «Справка» не уходила без каталога.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import logging
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import aiohttp
@@ -30,6 +36,10 @@ logger = logging.getLogger(__name__)
 HELP_BUTTON_LABEL = "Справка"
 CATALOG_DOC_TITLE = "Сферы и фильтры ГАРАНТ ПРАЙМ"
 CATALOG_DOC_FILENAME = "garant-sfery-i-filtry.pdf"
+CATALOG_DOC_CACHE_PATH = Path(__file__).resolve().parents[2] / ".vkbottle" / "catalog_doc.json"
+CATALOG_UPLOAD_ATTEMPTS = 3
+CATALOG_UPLOAD_RETRY_DELAY_S = 0.6
+_UPLOAD_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 
 def _build_news_keyboard() -> str:
@@ -80,6 +90,37 @@ async def _send_with_keyboard_fallback(send: Callable[..., Awaitable[object]], t
         await send(text)
 
 
+class CatalogUploadError(Exception):
+    """Сбой загрузки PDF на upload-сервер VK; обычно имеет смысл повторить."""
+
+
+def catalog_digest(html: str, pdf_bytes: bytes | None = None) -> str:
+    """Ключ кэша по HTML: байты PDF от Chromium каждый раз чуть разные."""
+    source = html.encode("utf-8") if (html or "").strip() else (pdf_bytes or b"")
+    return hashlib.sha256(source).hexdigest()
+
+
+def parse_docs_upload_payload(body: str) -> dict | None:
+    """JSON с upload-сервера VK. Пустое тело и HTML дают None, не исключение."""
+    text = (body or "").strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def catalog_file_token(payload: dict | None) -> str | None:
+    if not payload:
+        return None
+    token = payload.get("file")
+    if isinstance(token, str) and token.strip():
+        return token.strip()
+    return None
+
+
 def catalog_doc_url_from_save(saved: object) -> str | None:
     """Собирает https://vk.com/doc{owner_id}_{id} из ответа docs.save (модель или dict)."""
     doc = getattr(saved, "doc", None)
@@ -101,11 +142,54 @@ def catalog_doc_url_from_save(saved: object) -> str | None:
     return f"https://vk.com/doc{owner_id}_{doc_id}"
 
 
+def catalog_doc_url_from_items(items: object, title: str) -> str | None:
+    """Ищет уже загруженный каталог по заголовку (docs.search / docs.get)."""
+    if not items:
+        return None
+    wanted = title.casefold()
+    for item in items:
+        if isinstance(item, dict):
+            item_title = str(item.get("title") or "")
+        else:
+            item_title = str(getattr(item, "title", "") or "")
+        if item_title.casefold() != wanted:
+            continue
+        url = catalog_doc_url_from_save(item)
+        if url:
+            return url
+    return None
+
+
+def load_catalog_doc_cache(path: Path) -> tuple[str, str] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    digest, url = data.get("digest"), data.get("url")
+    if isinstance(digest, str) and isinstance(url, str) and url.startswith("https://vk.com/doc"):
+        return digest, url
+    return None
+
+
+def save_catalog_doc_cache(path: Path, digest: str, url: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"digest": digest, "url": url}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
 class VKInterface(BaseInterface):
+    _catalog_cache_path = CATALOG_DOC_CACHE_PATH
+    _catalog_cache: tuple[str, str] | None = None
+
     def __init__(self, bot_core: BotCore, vk_token: str) -> None:
         super().__init__(bot_core)
         self._bot = Bot(token=vk_token)
-        self._catalog_cache: tuple[str, str] | None = None
+        self._catalog_cache_path = CATALOG_DOC_CACHE_PATH
+        self._catalog_cache = load_catalog_doc_cache(self._catalog_cache_path)
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -144,35 +228,72 @@ class VKInterface(BaseInterface):
                     text = f"{text}\n\n{HELP_CATALOG_LINK_PREFIX}{url}"
             await _send_with_keyboard_fallback(message.answer, text)
 
+    def _remember_catalog_url(self, digest: str, url: str) -> None:
+        self._catalog_cache = (digest, url)
+        try:
+            save_catalog_doc_cache(self._catalog_cache_path, digest, url)
+        except OSError as exc:
+            logger.error("VKInterface: не удалось сохранить кэш ссылки на каталог: %s", exc)
+
     async def _upload_catalog_doc(
         self, message: Message, html: str, pdf_bytes: bytes | None = None
     ) -> str | None:
-        digest_src = pdf_bytes if pdf_bytes else html.encode("utf-8")
-        digest = hashlib.sha256(digest_src).hexdigest()
+        digest = catalog_digest(html, pdf_bytes)
         if self._catalog_cache and self._catalog_cache[0] == digest:
             return self._catalog_cache[1]
 
-        try:
-            url = await self._upload_catalog_doc_uncached(message, html, pdf_bytes)
-        except Exception as exc:  # noqa: BLE001 - справка без ссылки, бот не падает
-            logger.error("VKInterface: не удалось загрузить PDF-каталог в документы VK: %s", exc)
-            return None
+        last_error: Exception | None = None
+        for attempt in range(1, CATALOG_UPLOAD_ATTEMPTS + 1):
+            try:
+                url = await self._upload_catalog_doc_uncached(message, html, pdf_bytes)
+            except Exception as exc:  # noqa: BLE001 - повторяем, справка не должна падать
+                last_error = exc
+                logger.warning(
+                    "VKInterface: загрузка PDF-каталога, попытка %s/%s: %s",
+                    attempt,
+                    CATALOG_UPLOAD_ATTEMPTS,
+                    exc,
+                )
+                url = None
+            if url:
+                self._remember_catalog_url(digest, url)
+                return url
+            if attempt < CATALOG_UPLOAD_ATTEMPTS:
+                await asyncio.sleep(CATALOG_UPLOAD_RETRY_DELAY_S)
 
-        if url:
-            self._catalog_cache = (digest, url)
-        return url
+        existing = await self._find_existing_catalog_doc(message.ctx_api)
+        if existing:
+            logger.info("VKInterface: повторно использую уже загруженный каталог %s", existing)
+            self._remember_catalog_url(digest, existing)
+            return existing
+
+        logger.error(
+            "VKInterface: не удалось загрузить PDF-каталог в документы VK: %s",
+            last_error,
+        )
+        return None
+
+    async def _find_existing_catalog_doc(self, api) -> str | None:
+        try:
+            result = await api.docs.search(q=CATALOG_DOC_TITLE, search_own=1, count=20)
+        except Exception as exc:  # noqa: BLE001 - запасной путь, не роняем справку
+            logger.info("VKInterface: docs.search каталога не удался: %s", exc)
+            return None
+        items = getattr(result, "items", None)
+        if items is None and isinstance(result, dict):
+            items = result.get("items")
+        return catalog_doc_url_from_items(items, CATALOG_DOC_TITLE)
 
     async def _upload_catalog_doc_uncached(
         self, message: Message, html: str, pdf_bytes: bytes | None
-    ) -> str | None:
+    ) -> str:
         api = message.ctx_api
         server = await api.docs.get_messages_upload_server(peer_id=message.peer_id, type="doc")
         upload_url = getattr(server, "upload_url", None)
         if not upload_url and isinstance(server, dict):
             upload_url = server.get("upload_url")
         if not upload_url:
-            logger.error("VKInterface: docs.getMessagesUploadServer не вернул upload_url")
-            return None
+            raise CatalogUploadError("docs.getMessagesUploadServer не вернул upload_url")
 
         payload_pdf = pdf_bytes or await html_to_pdf(html)
         form = aiohttp.FormData()
@@ -182,17 +303,25 @@ class VKInterface(BaseInterface):
             filename=CATALOG_DOC_FILENAME,
             content_type="application/pdf",
         )
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=_UPLOAD_TIMEOUT) as session:
             async with session.post(upload_url, data=form) as response:
-                payload = await response.json(content_type=None)
+                raw = await response.text()
+                status = response.status
 
-        file_token = payload.get("file") if isinstance(payload, dict) else None
+        payload = parse_docs_upload_payload(raw)
+        file_token = catalog_file_token(payload)
         if not file_token:
-            logger.error("VKInterface: загрузка документа VK не вернула file: %s", payload)
-            return None
+            snippet = (raw or "")[:200]
+            error = payload.get("error") if payload else None
+            raise CatalogUploadError(
+                f"upload HTTP {status}, error={error!r}, body={snippet!r}"
+            )
 
         saved = await api.docs.save(file=file_token, title=CATALOG_DOC_TITLE)
-        return catalog_doc_url_from_save(saved)
+        url = catalog_doc_url_from_save(saved)
+        if not url:
+            raise CatalogUploadError(f"docs.save не вернул id документа: {saved!r}")
+        return url
 
     def run(self) -> None:
         self._bot.run()

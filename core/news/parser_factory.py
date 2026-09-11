@@ -37,7 +37,7 @@ import os
 from core.models import NewsItem, NewsQuery
 from core.news.parser_api import GarantApiParser
 from core.news.parser_base import NewsParser
-from core.news.parser_browser import GarantPrimeParser
+from core.news.parser_browser import DEFAULT_BROWSER_ORIGIN, GarantPrimeParser
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def get_news_parser() -> NewsParser:
             raise GarantModeConfigError(
                 "GARANT_MODE=browser указан явно, но GARANT_LOGIN/GARANT_PASSWORD не заданы в .env."
             )
-        return GarantPrimeParser(login=login, password=password)
+        return _browser_parser(login, password)
 
     if mode == "api":
         if not token:
@@ -92,7 +92,12 @@ def get_news_parser() -> NewsParser:
     if token:
         return GarantApiParser(token=token)
     if login and password:
-        return GarantPrimeParser(login=login, password=password)
+        return _browser_parser(login, password)
 
     logger.warning("GARANT_MODE не задан и учётные данные ГАРАНТ отсутствуют — новостной модуль отключён.")
     return NullNewsParser()
+
+
+def _browser_parser(login: str, password: str) -> GarantPrimeParser:
+    origin = os.getenv("GARANT_BROWSER_BASE_URL", "").strip() or DEFAULT_BROWSER_ORIGIN
+    return GarantPrimeParser(login=login, password=password, base_url=origin)

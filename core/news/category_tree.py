@@ -55,13 +55,18 @@ GENERIC_STEM_BLOCKLIST = {"деятельность"}
 состоит ровно из одного такого слова) отбрасывать нечем, оставляем как есть."""
 
 
-def extract_stems(text: str) -> list[str]:
+def extract_stems(text: str, *, ignore_generic: bool = True) -> list[str]:
     """Слова текста (от STEM_MIN_LENGTH символов) как "основы" для сопоставления —
     та же идиома частичного совпадения, что уже используется в IntentRouter.
 
     Общие слова из GENERIC_STEM_BLOCKLIST отбрасываются (см. её докстроку) —
-    если это не оставляет фразу совсем без значимых слов."""
+    если это не оставляет фразу совсем без значимых слов. `ignore_generic=False`
+    оставляет их — нужно, чтобы среди нескольких совпавших подписей сайта
+    предпочесть более точную («охранная деятельность» → не «Охрана труда»).
+    """
     words = [word for word in re.findall(r"[а-яёa-z]+", text.lower()) if len(word) >= STEM_MIN_LENGTH]
+    if not ignore_generic:
+        return words
     filtered = [word for word in words if word not in GENERIC_STEM_BLOCKLIST]
     return filtered or words
 
