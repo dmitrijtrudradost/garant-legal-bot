@@ -157,6 +157,7 @@ GARANT_API_BASE_URL = "https://api.garant.ru"
 GARANT_API_CATEGORIES_PATH = "/v2/prime"
 GARANT_API_NEWS_PATH = "/v2/prime/create-news"
 GARANT_API_TOPIC_PATH = "/v2/topic"
+GARANT_API_LIMITS_PATH = "/v2/limits"
 DOCUMENT_URL_BASE = "https://internet.garant.ru"
 
 MAX_CHUNK_DAYS = 10
@@ -393,6 +394,19 @@ class GarantApiParser(NewsParser):
         categories = tree.get("categories") or []
         return categories or None
 
+    async def fetch_limits(self) -> list[dict]:
+        """Остаток вызовов API на текущий месяц: GET /v2/limits.
+
+        Ответ — список объектов {title, value, names}. Вызов этого метода
+        сам по себе квоту семейств не уменьшает (его нет в names)."""
+        data = await self._call_api("GET", GARANT_API_LIMITS_PATH)
+        if not isinstance(data, list):
+            raise GarantApiError(
+                "Извините, сейчас не удалось получить лимиты. Попробуйте позже.",
+                technical_details="ответ /v2/limits не является списком",
+            )
+        return [item for item in data if isinstance(item, dict)]
+
     # -- Ограничения периода ----------------------------------------------
 
     @staticmethod
@@ -477,7 +491,7 @@ class GarantApiParser(NewsParser):
         *,
         json_body: dict | None = None,
         _retry: bool = True,
-    ) -> dict:
+    ) -> dict | list:
         """Общий HTTP-вызов к api.garant.ru — заголовки, SSL-контекст, разбор ошибок.
 
         Токен никогда не попадает в лог (см. п.6 докстроки модуля)."""

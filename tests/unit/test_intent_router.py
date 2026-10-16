@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from core.intent_router import IntentRouter
+from core.intent_router import HELP_TEXT, IntentRouter
 
 router = IntentRouter()
 
@@ -124,6 +124,14 @@ def test_is_help_request_exact_phrases():
         assert IntentRouter.is_help_request(phrase) is True
     assert IntentRouter.is_help_request("📅 Свой период") is True
     assert IntentRouter.is_help_request("хочу свой период новостей") is True
+
+
+def test_is_limits_request_exact_phrases():
+    assert IntentRouter.is_limits_request("лимиты") is True
+    assert IntentRouter.is_limits_request("Лимиты") is True
+    assert IntentRouter.is_limits_request("остаток запросов") is True
+    assert IntentRouter.is_limits_request("какие лимиты по охране") is False
+    assert "остаток запросов" in HELP_TEXT
 
 
 def test_is_custom_period_help_request_without_dates():
