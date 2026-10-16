@@ -6,6 +6,8 @@
 
 Общая часть (структура `.env`, проверка токенов, команды запуска) одинакова для обоих сценариев — различаются только шаги установки окружения.
 
+Текущий релиз **1.2**: [Legal news VK AI-bot 1.2](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2) (архив `vkbot-garant-1.2.zip`). Репозиторий: https://github.com/dmitrijtrudradost/legal_news_bot
+
 ---
 
 ## 0. Что потребуется заранее
@@ -43,11 +45,11 @@ python --version
 cd "C:\Users\Дмитрий\Desktop\zerocoder_kurs\задание_9_vkbot_парсер"
 ```
 
-Если разворачиваете с нуля из репозитория:
+Если разворачиваете с нуля — клонируйте репозиторий или скачайте архив релиза [1.2](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2):
 
 ```powershell
-git clone <репозиторий>
-cd задание_9_vkbot_парсер
+git clone https://github.com/dmitrijtrudradost/legal_news_bot.git
+cd legal_news_bot
 ```
 
 ### 3. Создать и активировать виртуальное окружение
@@ -137,11 +139,11 @@ python3 --version   # убедиться, что 3.12+
 ### 3. Получить код проекта
 
 ```bash
-git clone <репозиторий>
-cd задание_9_vkbot_парсер
+git clone https://github.com/dmitrijtrudradost/legal_news_bot.git
+cd legal_news_bot
 ```
 
-(Либо скопировать проект на сервер любым другим способом — `scp`, `rsync` и т.п., если репозитория ещё нет.)
+Архив релиза: [vkbot-garant-1.2.zip](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2). Либо скопировать проект на сервер `scp`/`rsync`.
 
 ### 4. Создать и активировать виртуальное окружение
 
