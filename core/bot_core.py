@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 GREETING_TEMPLATE = "Привет, {name}! Я AI-бот. Задайте мне вопрос!"
 SHOW_MORE_NO_RESULTS_TEXT = "Сначала задайте новостной запрос — тогда будет что листать."
 SHOW_MORE_EXHAUSTED_TEXT = "Это были все найденные новости."
+LIMITS_UNAVAILABLE_TEXT = "Лимиты доступны только в режиме api."
+LIMITS_FAILED_TEXT = "Извините, сейчас не удалось получить лимиты. Попробуйте позже."
 
 
 def _ru_unit(count: int, one: str, few: str, many: str) -> str:
@@ -62,6 +64,20 @@ def news_source_busy_text(seconds: int) -> str:
     )
 
 
+def format_limits(items: list[dict]) -> str:
+    """Список семейств методов и оставшихся вызовов из GET /v2/limits."""
+    lines = ["Лимиты ГАРАНТ на этот месяц"]
+    for item in items:
+        title = item.get("title")
+        value = item.get("value")
+        if not isinstance(title, str) or not title.strip() or isinstance(value, bool) or not isinstance(value, int):
+            continue
+        lines.append(f"{title.strip()}: {value}")
+    if len(lines) == 1:
+        return LIMITS_FAILED_TEXT
+    return "\n".join(lines)
+
+
 class BotCore:
     def __init__(
         self,
@@ -87,6 +103,9 @@ class BotCore:
     async def handle_message(self, message: IncomingMessage) -> OutgoingMessage:
         if IntentRouter.is_help_request(message.text):
             return await self._help_message()
+
+        if IntentRouter.is_limits_request(message.text):
+            return await self._limits_message()
 
         if IntentRouter.is_show_more_request(message.text):
             return self._page_from_cache(message.peer_id)
@@ -115,6 +134,19 @@ class BotCore:
 
         reply_text = await self._dialogue_service.respond(message.peer_id, message.text)
         return OutgoingMessage(text=reply_text)
+
+    async def _limits_message(self) -> OutgoingMessage:
+        getter = getattr(self._news_parser, "fetch_limits", None)
+        if not callable(getter):
+            return OutgoingMessage(text=LIMITS_UNAVAILABLE_TEXT)
+        try:
+            items = await getter()
+        except Exception as exc:  # noqa: BLE001 - сбой квоты не должен ронять бота
+            logger.error("BotCore: не удалось получить лимиты ГАРАНТ: %s", exc)
+            return OutgoingMessage(text=LIMITS_FAILED_TEXT)
+        if not isinstance(items, list):
+            return OutgoingMessage(text=LIMITS_FAILED_TEXT)
+        return OutgoingMessage(text=format_limits(items))
 
     def _page_from_cache(self, peer_id: str) -> OutgoingMessage:
         snapshot = self._results_cache.snapshot(peer_id)

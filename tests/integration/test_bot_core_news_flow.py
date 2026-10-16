@@ -3,6 +3,8 @@ from datetime import date, timedelta
 import pytest
 
 from core.bot_core import (
+    LIMITS_FAILED_TEXT,
+    LIMITS_UNAVAILABLE_TEXT,
     BotCore,
     SHOW_MORE_EXHAUSTED_TEXT,
     SHOW_MORE_NO_RESULTS_TEXT,
@@ -139,6 +141,7 @@ async def test_help_request_does_not_fetch_news():
     )
 
     assert "Как спросить новости" in outgoing.text
+    assert "остаток запросов" in outgoing.text
     assert "Новости в сфере образование за 6 месяцев" in outgoing.text
     assert news_parser.received_query is None
     assert "Список сфер недоступен" not in outgoing.text
@@ -314,3 +317,46 @@ async def test_fuzzy_news_phrase_goes_through_ai_classifier():
     assert "Нормативка" in outgoing.text
     assert news_parser.received_query is not None
     assert news_parser.received_query.date_from == date.today() - timedelta(days=30)
+
+
+@pytest.mark.asyncio
+async def test_limits_request_formats_api_quota():
+    class LimitsParser(FakeNewsParser):
+        async def fetch_limits(self):
+            return [
+                {"title": "Информация о документе", "value": 280, "names": ["topic"]},
+                {"title": "Экспорт", "value": 12, "names": ["topic/html"]},
+            ]
+
+    bot_core = make_bot_core(LimitsParser([]))
+    outgoing = await bot_core.handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="остаток запросов", interface="vk")
+    )
+
+    assert "Лимиты ГАРАНТ на этот месяц" in outgoing.text
+    assert "Информация о документе: 280" in outgoing.text
+    assert "Экспорт: 12" in outgoing.text
+
+
+@pytest.mark.asyncio
+async def test_limits_request_without_api_parser_explains():
+    bot_core = make_bot_core(FakeNewsParser([]))
+    outgoing = await bot_core.handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="лимиты", interface="console")
+    )
+
+    assert outgoing.text == LIMITS_UNAVAILABLE_TEXT
+
+
+@pytest.mark.asyncio
+async def test_limits_request_failure_does_not_crash():
+    class FailingLimitsParser(FakeNewsParser):
+        async def fetch_limits(self):
+            raise RuntimeError("сеть")
+
+    bot_core = make_bot_core(FailingLimitsParser([]))
+    outgoing = await bot_core.handle_message(
+        IncomingMessage(peer_id="peer1", user_name=None, text="лимиты", interface="vk")
+    )
+
+    assert outgoing.text == LIMITS_FAILED_TEXT

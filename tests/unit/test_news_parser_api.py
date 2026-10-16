@@ -24,7 +24,7 @@ from core.news.parser_api import (
 
 
 class FakeResponse:
-    def __init__(self, status: int, payload: dict | None = None, text: str = ""):
+    def __init__(self, status: int, payload: dict | list | None = None, text: str = ""):
         self.status = status
         self._payload = payload
         self._text = text
@@ -493,3 +493,20 @@ async def test_fetch_exact_date_returns_none_on_malformed_response(monkeypatch):
     result = await parser._fetch_exact_date(1)
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_limits_returns_remaining_calls(monkeypatch):
+    payload = [
+        {"title": "Информация о документе", "value": 300, "names": ["topic"]},
+        {"title": "Экспорт", "value": 30, "names": ["topic/html"]},
+    ]
+    calls = patch_session(monkeypatch, [FakeResponse(200, payload=payload)])
+    parser = GarantApiParser(token="test-token")
+
+    result = await parser.fetch_limits()
+
+    assert result == payload
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["url"].endswith("/v2/limits")
+    assert "Bearer test-token" in calls[0]["headers"]["Authorization"]
