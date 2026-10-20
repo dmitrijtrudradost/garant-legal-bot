@@ -101,6 +101,10 @@ HELP_TEXT = (
     "\n"
     "«лимиты» или «остаток запросов» — сколько вызовов API ГАРАНТ осталось в этом месяце.\n"
     "\n"
+    "«шаблоны договоров» — нумерованный список шаблонов. "
+    "«шаблон 1» или «шаблон» и часть названия — один документ Word.\n"
+    "«сохранить» — записать этот список со ссылками в файл.\n"
+    "\n"
     "Примеры запросов\n"
     "1. Охранные новости за месяц\n"
     "2. Новости в сфере образование за 6 месяцев\n"
@@ -110,6 +114,8 @@ HELP_TEXT = (
 HELP_CATALOG_LINK_PREFIX = "Список сфер и фильтров: "
 HELP_CATALOG_UNAVAILABLE = "Список сфер недоступен."
 LIMITS_EXACT_PHRASES = frozenset({"лимиты", "остаток запросов"})
+TEMPLATES_LIST_PHRASE = "шаблоны договоров"
+SAVE_LIST_PHRASE = "сохранить"
 # Совместимость со старым именем: узкая подсказка про даты заменена полной справкой.
 CUSTOM_PERIOD_HELP_TEXT = HELP_TEXT
 
@@ -397,6 +403,19 @@ class IntentRouter:
     def is_limits_request(text: str) -> bool:
         """Точные фразы «лимиты» и «остаток запросов» — остаток квоты API, не новости и не AI."""
         return IntentRouter._normalize_exact_phrase(text) in LIMITS_EXACT_PHRASES
+
+    @staticmethod
+    def template_command(text: str) -> tuple[str, str] | None:
+        """«шаблоны договоров» или «шаблон N / часть названия». Не подстрока и не AI."""
+        normalized = IntentRouter._normalize_exact_phrase(text)
+        if normalized == TEMPLATES_LIST_PHRASE:
+            return ("list", "")
+        if normalized == SAVE_LIST_PHRASE:
+            return ("save", "")
+        match = re.fullmatch(r"шаблон\s+(\S(?:.*\S)?)", normalized)
+        if match:
+            return ("one", match.group(1))
+        return None
 
     @staticmethod
     def is_help_request(text: str) -> bool:

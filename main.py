@@ -1,3 +1,4 @@
+
 """Единая точка входа: собирает зависимости ядра и запускает выбранный интерфейс.
 
     python main.py --vk         # VK-бот (по умолчанию, для обратной совместимости)
@@ -45,8 +46,16 @@ def build_bot_core() -> BotCore:
     news_formatter = NewsFormatter()
     intent_router = IntentRouter(ai_client=ai_client)
     results_cache = InMemoryNewsResultsCache()
+    template_exporter = _template_exporter(news_parser)
 
-    return BotCore(dialogue_service, intent_router, news_parser, news_formatter, results_cache)
+    return BotCore(
+        dialogue_service,
+        intent_router,
+        news_parser,
+        news_formatter,
+        results_cache,
+        template_exporter=template_exporter,
+    )
 
 
 def build_interface(name: str, bot_core: BotCore) -> BaseInterface:
@@ -63,8 +72,19 @@ def build_interface(name: str, bot_core: BotCore) -> BaseInterface:
     raise ValueError(f"Неизвестный интерфейс: {name}")
 
 
+def _template_exporter(news_parser):
+    """Экспортёр шаблонов только при рабочем API-клиенте (режим api и токен)."""
+    client = getattr(news_parser, "api_client", None)
+    if client is None:
+        return None
+    from exports.garant_templates.converter import converter_from_env
+    from exports.garant_templates.exporter import GarantTemplateExporter, resolve_templates_dir
+
+    return GarantTemplateExporter(client, resolve_templates_dir(), converter_from_env())
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="VK AI-бот — единая точка входа")
+    parser = argparse.ArgumentParser(description="Гарант-ai-бот — единая точка входа")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--vk", action="store_const", dest="interface", const="vk")
     group.add_argument("--console", action="store_const", dest="interface", const="console")

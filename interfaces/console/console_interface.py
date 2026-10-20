@@ -53,14 +53,23 @@ class ConsoleInterface(BaseInterface):
                 interface="console",
             )
             outgoing = await self._bot_core.handle_message(incoming)
-            print(self._text_for_console(outgoing.text, outgoing.catalog_html))
+            print(self._text_for_console(outgoing.text, outgoing.catalog_html, outgoing.attachment))
 
     @staticmethod
-    def _text_for_console(text: str, catalog_html: str | None) -> str:
+    def _text_for_console(
+        text: str,
+        catalog_html: str | None,
+        attachment: tuple[str, bytes] | None = None,
+    ) -> str:
+        lines = [text]
+        if attachment:
+            filename, _payload = attachment
+            if filename not in text:
+                lines.append(f"Файл: {filename}")
         if not catalog_html:
-            return text
+            return "\n".join(lines)
         html_path = CATALOG_HTML_PATH if CATALOG_HTML_PATH.is_file() else save_catalog_html(catalog_html)
-        lines = [text, f"{HELP_CATALOG_LINK_PREFIX}{html_path.as_uri()}"]
+        lines.append(f"{HELP_CATALOG_LINK_PREFIX}{html_path.as_uri()}")
         if CATALOG_PDF_PATH.is_file():
             lines.append(f"{HELP_CATALOG_LINK_PREFIX}{CATALOG_PDF_PATH.as_uri()}")
         return "\n\n".join(lines)

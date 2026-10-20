@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 from core.dialogue_service import DialogueService
 from core.intent_router import (
@@ -15,6 +17,8 @@ from core.intent_router import (
     IntentRouter,
 )
 from core.models import IncomingMessage, OutgoingMessage
+from exports.garant_templates.catalog import TemplateRef, template_page_url
+from exports.garant_templates.exporter import ExportSummary, resolve_templates_dir
 from core.news.catalog_html import (
     CATALOG_HTML_PATH,
     CATALOG_PDF_PATH,
@@ -34,6 +38,13 @@ SHOW_MORE_NO_RESULTS_TEXT = "Сначала задайте новостной з
 SHOW_MORE_EXHAUSTED_TEXT = "Это были все найденные новости."
 LIMITS_UNAVAILABLE_TEXT = "Лимиты доступны только в режиме api."
 LIMITS_FAILED_TEXT = "Извините, сейчас не удалось получить лимиты. Попробуйте позже."
+TEMPLATES_UNAVAILABLE_TEXT = "Шаблоны доступны только в режиме api."
+TEMPLATES_FAILED_TEXT = "Извините, сейчас не удалось получить шаблоны договоров. Попробуйте позже."
+TEMPLATES_NOT_FOUND_TEXT = "Шаблон не найден. Напишите «шаблоны договоров» и выберите номер из списка."
+TEMPLATES_EMPTY_TEXT = "В каталоге шаблонов договоров ничего не найдено."
+TEMPLATES_EXHAUSTED_TEXT = "Это были все шаблоны договоров."
+TEMPLATES_SAVE_NAME = "templates.json"
+TEMPLATES_SAVE_VK_NAME = "шаблоны-договоров.json"
 
 
 def _ru_unit(count: int, one: str, few: str, many: str) -> str:
@@ -86,12 +97,17 @@ class BotCore:
         news_parser: NewsParser,
         news_formatter: NewsFormatter,
         results_cache: NewsResultsCache,
+        template_exporter=None,
     ) -> None:
         self._dialogue_service = dialogue_service
         self._intent_router = intent_router
         self._news_parser = news_parser
         self._news_formatter = news_formatter
         self._results_cache = results_cache
+        self._template_exporter = template_exporter
+        self._template_refs: dict[str, list[TemplateRef]] = {}
+        self._template_shown: dict[str, int] = {}
+        self._page_source: dict[str, str] = {}
 
     def greeting_for(self, user_name: str | None) -> str:
         return GREETING_TEMPLATE.format(name=user_name or "пользователь")
@@ -107,7 +123,18 @@ class BotCore:
         if IntentRouter.is_limits_request(message.text):
             return await self._limits_message()
 
+        template_command = IntentRouter.template_command(message.text)
+        if template_command is not None:
+            kind, query = template_command
+            if kind == "list":
+                return await self._templates_list(message.peer_id)
+            if kind == "save":
+                return await self._save_templates_list(message.peer_id, message.interface)
+            return await self._template_one(message.peer_id, query)
+
         if IntentRouter.is_show_more_request(message.text):
+            if self._page_source.get(message.peer_id) == "templates":
+                return self._templates_next_page(message.peer_id)
             return self._page_from_cache(message.peer_id)
 
         news_query = self._intent_router.route(message.text)
@@ -130,6 +157,7 @@ class BotCore:
             if not items:
                 return OutgoingMessage(text=self._news_formatter.format([]))
             self._results_cache.store(message.peer_id, items)
+            self._page_source[message.peer_id] = "news"
             return self._page_from_cache(message.peer_id)
 
         reply_text = await self._dialogue_service.respond(message.peer_id, message.text)
@@ -147,6 +175,99 @@ class BotCore:
         if not isinstance(items, list):
             return OutgoingMessage(text=LIMITS_FAILED_TEXT)
         return OutgoingMessage(text=format_limits(items))
+
+    async def _templates_list(self, peer_id: str) -> OutgoingMessage:
+        if self._template_exporter is None:
+            return OutgoingMessage(text=TEMPLATES_UNAVAILABLE_TEXT)
+        try:
+            refs = await self._template_exporter.list_templates()
+        except Exception as exc:  # noqa: BLE001 - сбой каталога не должен ронять бота
+            logger.error("BotCore: не удалось получить каталог шаблонов: %s", exc)
+            return OutgoingMessage(text=TEMPLATES_FAILED_TEXT)
+        if not isinstance(refs, list):
+            return OutgoingMessage(text=TEMPLATES_FAILED_TEXT)
+        self._template_refs[peer_id] = refs
+        self._template_shown[peer_id] = 0
+        self._page_source[peer_id] = "templates"
+        if not refs:
+            return OutgoingMessage(text=TEMPLATES_EMPTY_TEXT)
+        return self._templates_next_page(peer_id)
+
+    def _templates_next_page(self, peer_id: str) -> OutgoingMessage:
+        refs = self._template_refs.get(peer_id) or []
+        shown = self._template_shown.get(peer_id, 0)
+        if not refs or shown >= len(refs):
+            return OutgoingMessage(text=TEMPLATES_EXHAUSTED_TEXT)
+        page = refs[shown : shown + MAX_ITEMS_IN_REPLY]
+        self._template_shown[peer_id] = shown + len(page)
+        lines = ["Шаблоны договоров ГАРАНТ"]
+        for offset, ref in enumerate(page, start=shown + 1):
+            lines.append(f"{offset}. {ref.title}")
+        end = shown + len(page)
+        lines.append("")
+        if end < len(refs):
+            lines.append(f"Показаны {shown + 1}–{end} из {len(refs)}.")
+            lines.append("➡️ «ещё» — следующая страница")
+        else:
+            lines.append(f"Показаны все {len(refs)}.")
+            lines.append("Напишите «шаблон N» или часть названия.")
+        lines.append("💾 «сохранить» — весь список в файл.")
+        return OutgoingMessage(text="\n".join(lines))
+
+    async def _save_templates_list(self, peer_id: str, interface: str = "vk") -> OutgoingMessage:
+        if self._template_exporter is None:
+            return OutgoingMessage(text=TEMPLATES_UNAVAILABLE_TEXT)
+        refs = await self._ensure_template_refs(peer_id)
+        if refs is None:
+            return OutgoingMessage(text=TEMPLATES_FAILED_TEXT)
+        if not refs:
+            return OutgoingMessage(text=TEMPLATES_EMPTY_TEXT)
+        out_dir = getattr(self._template_exporter, "out_dir", None)
+        if not isinstance(out_dir, Path):
+            out_dir = resolve_templates_dir()
+        path = _write_templates_json(out_dir, refs)
+        text = f"💾 Список сохранён\nДокументов: {len(refs)}"
+        if interface == "console":
+            text = f"{text}\n{path}"
+        return OutgoingMessage(
+            text=text,
+            attachment=(TEMPLATES_SAVE_VK_NAME, path.read_bytes()),
+        )
+
+    async def _ensure_template_refs(self, peer_id: str) -> list[TemplateRef] | None:
+        refs = self._template_refs.get(peer_id)
+        if refs:
+            return refs
+        try:
+            refs = await self._template_exporter.list_templates()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("BotCore: не удалось получить каталог шаблонов: %s", exc)
+            return None
+        if not isinstance(refs, list):
+            return None
+        self._template_refs[peer_id] = refs
+        return refs
+
+    async def _template_one(self, peer_id: str, query: str) -> OutgoingMessage:
+        if self._template_exporter is None:
+            return OutgoingMessage(text=TEMPLATES_UNAVAILABLE_TEXT)
+        refs = await self._ensure_template_refs(peer_id)
+        if refs is None:
+            return OutgoingMessage(text=TEMPLATES_FAILED_TEXT)
+        picked = _pick_template(refs, query)
+        if picked is None:
+            return OutgoingMessage(text=TEMPLATES_NOT_FOUND_TEXT)
+        if isinstance(picked, list):
+            lines = ["Найдено несколько шаблонов. Уточните номер:"]
+            for ref in picked[:MAX_ITEMS_IN_REPLY]:
+                lines.append(f"{refs.index(ref) + 1}. {ref.title}")
+            return OutgoingMessage(text="\n".join(lines))
+        try:
+            summary = await self._template_exporter.export([picked], overwrite=False, limit=1)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("BotCore: не удалось выгрузить шаблон: %s", exc)
+            return OutgoingMessage(text=TEMPLATES_FAILED_TEXT)
+        return _outgoing_from_export(summary)
 
     def _page_from_cache(self, peer_id: str) -> OutgoingMessage:
         snapshot = self._results_cache.snapshot(peer_id)
@@ -221,3 +342,54 @@ def _read_existing_catalog_pdf() -> bytes | None:
     except OSError as exc:
         logger.error("BotCore: не удалось прочитать PDF-каталог из docs/: %s", exc)
     return None
+
+
+def _write_templates_json(out_dir: Path, refs: list[TemplateRef]) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "documents": [
+            {
+                "number": index,
+                "topic": ref.topic,
+                "title": ref.title,
+                "url": template_page_url(ref.topic),
+            }
+            for index, ref in enumerate(refs, start=1)
+        ]
+    }
+    path = out_dir / TEMPLATES_SAVE_NAME
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def _pick_template(refs: list[TemplateRef], query: str) -> TemplateRef | list[TemplateRef] | None:
+    if query.isdigit():
+        index = int(query)
+        if 1 <= index <= len(refs):
+            return refs[index - 1]
+        return None
+    needle = query.casefold()
+    matches = [ref for ref in refs if needle in ref.title.casefold()]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        return None
+    return matches
+
+
+def _outgoing_from_export(summary: ExportSummary) -> OutgoingMessage:
+    if summary.stopped and not summary.results:
+        return OutgoingMessage(text=summary.message)
+    if not summary.results:
+        return OutgoingMessage(text=TEMPLATES_FAILED_TEXT)
+    result = summary.results[0]
+    if result.path is None or not result.path.is_file():
+        return OutgoingMessage(text=result.message or summary.message or TEMPLATES_FAILED_TEXT)
+    lines = [result.title]
+    if result.message:
+        lines.append(result.message)
+    lines.append(f"Файл: {result.path}")
+    text = "\n".join(lines)
+    if summary.stopped:
+        text = f"{summary.message}\n\n{text}"
+    return OutgoingMessage(text=text, attachment=(result.path.name, result.path.read_bytes()))

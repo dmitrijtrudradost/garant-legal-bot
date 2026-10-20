@@ -5,8 +5,10 @@ import pytest
 
 from interfaces.vk import vk_interface
 from interfaces.vk.vk_interface import (
+    ATTACHMENT_FAILED_TEXT,
     CATALOG_DOC_TITLE,
     VKInterface,
+    append_doc_attachment,
     catalog_digest,
     catalog_doc_url_from_items,
     catalog_file_token,
@@ -26,6 +28,24 @@ def _iface(tmp_path) -> VKInterface:
 class _Msg:
     peer_id = 6559252
     ctx_api = SimpleNamespace()
+
+
+def test_append_doc_attachment_keeps_url_out_of_text():
+    text, attachment = append_doc_attachment("Справка", None, "https://vk.com/doc6559252_712632383")
+    assert text == "Справка"
+    assert "vk.com" not in text
+    assert attachment == "doc6559252_712632383"
+
+    failed, still = append_doc_attachment("Справка", None, None)
+    assert ATTACHMENT_FAILED_TEXT in failed
+    assert "vk.com" not in failed
+    assert still is None
+
+    both_text, both = append_doc_attachment(
+        "Справка", "doc1_2", "https://vk.com/doc6559252_3"
+    )
+    assert both_text == "Справка"
+    assert both == "doc1_2,doc6559252_3"
 
 
 def test_parse_docs_upload_payload_empty_and_html():
@@ -115,3 +135,35 @@ async def test_upload_catalog_reuses_existing_doc_after_no_free_space(tmp_path, 
     iface._find_existing_catalog_doc = existing  # type: ignore[method-assign]
     url = await iface._upload_catalog_doc(_Msg(), html="<html>x</html>", pdf_bytes=b"%PDF")
     assert url == "https://vk.com/doc6559252_710572897"
+
+
+@pytest.mark.asyncio
+async def test_upload_user_doc_retries_then_returns_vk_attachment(tmp_path, monkeypatch):
+    monkeypatch.setattr(vk_interface, "CATALOG_UPLOAD_RETRY_DELAY_S", 0)
+    iface = _iface(tmp_path)
+    attempts = {"n": 0}
+
+    async def post(message, payload, *, filename, content_type, title):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise vk_interface.CatalogUploadError("пустое тело")
+        return "https://vk.com/doc6559252_99"
+
+    iface._post_doc = post  # type: ignore[method-assign]
+    url = await iface._upload_user_doc(_Msg(), "101_dogovor.docx", b"PK")
+    assert url == "https://vk.com/doc6559252_99"
+    assert vk_interface.vk_doc_attachment(url) == "doc6559252_99"
+    assert attempts["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_upload_user_doc_failure_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(vk_interface, "CATALOG_UPLOAD_RETRY_DELAY_S", 0)
+    monkeypatch.setattr(vk_interface, "CATALOG_UPLOAD_ATTEMPTS", 2)
+    iface = _iface(tmp_path)
+
+    async def post(message, payload, *, filename, content_type, title):
+        raise vk_interface.CatalogUploadError("сбой")
+
+    iface._post_doc = post  # type: ignore[method-assign]
+    assert await iface._upload_user_doc(_Msg(), "101_dogovor.docx", b"PK") is None

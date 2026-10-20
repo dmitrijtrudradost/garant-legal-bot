@@ -11,11 +11,11 @@ import json
 import pytest
 
 from core.bot_core import BotCore
+from core.garant import api_client as api_client_module
 from core.dialogue_service import DialogueService
 from core.history import InMemoryDialogueHistory
 from core.intent_router import IntentRouter
 from core.models import IncomingMessage
-from core.news import parser_api as parser_api_module
 from core.news.formatter import NewsFormatter
 from core.news.results_cache import InMemoryNewsResultsCache
 from core.news.parser_api import GarantApiParser
@@ -80,7 +80,7 @@ async def test_news_request_goes_through_real_garant_api_parser(
         FakeResponse(200, payload=garant_api_categories_sample),  # GET /v2/prime
         FakeResponse(200, payload=garant_api_news_sample),  # POST /v2/prime/create-news
     ]
-    monkeypatch.setattr(parser_api_module.aiohttp, "ClientSession", lambda: FakeSession(responses))
+    monkeypatch.setattr(api_client_module.aiohttp, "ClientSession", lambda: FakeSession(responses))
 
     news_parser = GarantApiParser(token="test-token")
     bot_core = make_bot_core(news_parser)
