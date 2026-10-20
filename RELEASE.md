@@ -1,17 +1,19 @@
-# VK AI-бот 1.2.1
+# чатбот_гарант_версия 1.2.2
 
-Чат-бот ВКонтакте и консоль: диалог на GPT-4o Mini (ProxyAPI) и новости ГАРАНТ ПРАЙМ.
+Чат-бот ВКонтакте и консоль: диалог на GPT-4o Mini (ProxyAPI), новости ГАРАНТ ПРАЙМ и шаблоны договоров.
 
-Дата: 16.10.2026.
+Дата: 20.10.2026.
 
-## Что нового относительно 1.2
+## Что нового относительно 1.2.1
 
-Остаток месячной квоты API ГАРАНТ в чате.
+Шаблоны договоров из ГАРАНТ в Word.
 
-- Фразы «лимиты» и «остаток запросов» вызывают `GET https://api.garant.ru/v2/limits`.
-- Ответ — список: название семейства методов и сколько вызовов осталось в этом месяце.
-- Кнопки нет. В режиме `browser` и без `GARANT_TOKEN` бот пишет, что лимиты доступны только в режиме `api`.
-- Описание этих фраз добавлено в справку и в каталог сфер.
+- Фразы «шаблоны договоров», «шаблон N» и «шаблон» с частью названия. Кнопки нет, AI для этих фраз не вызывается.
+- Список длиннее 10 пунктов листается командой «ещё». Один шаблон приходит файлом: в VK — документом, в консоли — путём к файлу.
+- `GET /v2/topic/5703683/html` даёт каталог, `GET /v2/topic/{id}/download` — RTF. DOCX делает LibreOffice (`soffice`). Нет LibreOffice — остаётся RTF.
+- Повторная выгрузка берёт уже скачанный файл, если `last_modified` не менялся. `ACCESS_BY_MONEY`, `ACCESS_BY_REQUEST` и `ACCESS_DENIED` пропускаются. 423 останавливает выгрузку.
+- В режиме `browser` и без `GARANT_TOKEN` бот пишет, что шаблоны доступны только в режиме `api`.
+- Выгрузка диалога VK запускается как `python -m exports.export_vk_history`.
 
 ## Запуск
 
@@ -24,4 +26,4 @@ copy .env.example .env
 python main.py --vk
 ```
 
-В `.env` нужны `VK_TOKEN` и `PROXYAPI_KEY`. Для API-новостей и лимитов: `GARANT_TOKEN` и `GARANT_MODE=api`. Для browser: `GARANT_LOGIN`, `GARANT_PASSWORD`, `GARANT_MODE=browser` (лента — `GARANT_BROWSER_BASE_URL`, по умолчанию `https://internet.garant.ru`). У токена VK должно быть право документы (`docs`).
+В `.env` нужны `VK_TOKEN` и `PROXYAPI_KEY`. Для API-новостей, лимитов и шаблонов: `GARANT_TOKEN` и `GARANT_MODE=api`. Для `.docx` — LibreOffice (`LIBREOFFICE_PATH`, если `soffice` не в PATH). Для browser: `GARANT_LOGIN`, `GARANT_PASSWORD`, `GARANT_MODE=browser`. У токена VK должно быть право документы (`docs`).

@@ -3,10 +3,10 @@
 Не pytest и не часть ядра бота — живой вызов messages.getConversations /
 messages.getHistory по VK_TOKEN из .env (токен сообщества).
 
-    python export_vk_history.py
-    python export_vk_history.py --from 2026-09-10
-    python export_vk_history.py --from "2026-09-10 15:00" --to "2026-09-10 16:30"
-    python export_vk_history.py --peer-id 123456789 --from 2026-09-08
+    python -m exports.export_vk_history
+    python -m exports.export_vk_history --from 2026-09-10
+    python -m exports.export_vk_history --from "2026-09-10 15:00" --to "2026-09-10 16:30"
+    python -m exports.export_vk_history --peer-id 123456789 --from 2026-09-08
 """
 
 from __future__ import annotations
@@ -25,7 +25,8 @@ from dotenv import load_dotenv
 VK_API_VERSION = "5.199"
 VK_API_URL = "https://api.vk.com/method/{method}"
 HISTORY_PAGE_SIZE = 200
-OUTPUT_DIR = Path("tz") / "test"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = PROJECT_ROOT / "downloads" / "dialogs"
 
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
@@ -55,7 +56,7 @@ def parse_bound(value: str, *, end_of_day: bool) -> datetime:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Выгрузить диалог пользователя с ботом VK в tz/test/"
+        description="Выгрузить диалог пользователя с ботом VK в downloads/dialogs/"
     )
     parser.add_argument(
         "--peer-id",
@@ -159,11 +160,9 @@ def message_text(message: dict) -> str:
     return "[пустое сообщение]"
 
 
-def output_filename(peer_id: int, date_from: datetime | None) -> Path:
-    if date_from is not None:
-        stamp = date_from.strftime("%Y-%m-%d")
-    else:
-        stamp = datetime.now().strftime("%Y-%m-%d")
+def output_filename(peer_id: int) -> Path:
+    """Имя с датой и временем выгрузки, чтобы файлы за один день не затирали друг друга."""
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     return OUTPUT_DIR / f"{peer_id}_{stamp}.md"
 
 
@@ -219,7 +218,7 @@ async def export_history(args: argparse.Namespace) -> Path:
         items = await fetch_history(session, token, peer_id)
 
     items = filter_by_range(items, date_from, date_to)
-    path = output_filename(peer_id, date_from)
+    path = output_filename(peer_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_markdown(peer_id, items, date_from, date_to), encoding="utf-8")
     return path

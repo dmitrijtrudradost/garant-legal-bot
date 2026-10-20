@@ -5,11 +5,12 @@
 Сами тексты кнопок распознаются той же логикой `IntentRouter`, что и обычный
 текст — кнопка ничем не отличается от того, если бы пользователь напечатал
 её текст руками (см. core/intent_router.py и тесты на эти же лейблы).
-Каталог сфер печатается в PDF (VK не принимает HTML) и загружается как
-документ сообщества — в текст справки добавляется ссылка `https://vk.com/doc…`.
-Первая загрузка на upload-сервер VK иногда отвечает пустым телом
-(JSONDecodeError) или `no_free_space` — повторяем попытку и переиспользуем
-уже сохранённую ссылку, чтобы «Справка» не уходила без каталога.
+Каталог сфер печатается в PDF (VK не принимает HTML) и уходит вложением
+документа `doc{owner}_{id}`. Адрес `https://vk.com/doc…` в текст не пишется:
+на смартфоне такая ссылка открывает внешнее PDF-приложение и зацикливает
+возврат в VK. Первая загрузка на upload-сервер VK иногда отвечает пустым
+телом (JSONDecodeError) или `no_free_space` — повторяем попытку и
+переиспользуем уже сохранённый документ, чтобы «Справка» не уходила без каталога.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from vkbottle import BaseMiddleware, Keyboard, KeyboardButtonColor, Text, VKAPIE
 from vkbottle.bot import Bot, Message
 
 from core.bot_core import BotCore
-from core.intent_router import HELP_CATALOG_LINK_PREFIX, SHOW_MORE_BUTTON_LABEL
+from core.intent_router import SHOW_MORE_BUTTON_LABEL
 from core.models import IncomingMessage
 from core.news.catalog_html import html_to_pdf
 from interfaces.base import BaseInterface
@@ -39,6 +40,7 @@ CATALOG_DOC_FILENAME = "garant-sfery-i-filtry.pdf"
 CATALOG_DOC_CACHE_PATH = Path(__file__).resolve().parents[2] / ".vkbottle" / "catalog_doc.json"
 CATALOG_UPLOAD_ATTEMPTS = 3
 CATALOG_UPLOAD_RETRY_DELAY_S = 0.6
+ATTACHMENT_FAILED_TEXT = "Не удалось прикрепить файл."
 _UPLOAD_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 
@@ -72,22 +74,29 @@ def _build_news_keyboard() -> str:
 NEWS_KEYBOARD = _build_news_keyboard()
 
 
-async def _send_with_keyboard_fallback(send: Callable[..., Awaitable[object]], text: str) -> None:
+async def _send_with_keyboard_fallback(
+    send: Callable[..., Awaitable[object]],
+    text: str,
+    attachment: str | None = None,
+) -> None:
     """Отправляет текст с клавиатурой; если у сообщества не включены "Возможности ботов"
     (VK API отвечает ошибкой 912 "This is a chat bot feature, change this status in
     settings"), клавиатура молча отбрасывается VK вместе со всем сообщением — без
     этой подстраховки пользователь не получил бы вообще никакого ответа. Включается
     в настройках сообщества: Управление сообществом → Сообщения → "Возможности ботов".
     """
+    extra: dict[str, str] = {}
+    if attachment:
+        extra["attachment"] = attachment
     try:
-        await send(text, keyboard=NEWS_KEYBOARD)
+        await send(text, keyboard=NEWS_KEYBOARD, **extra)
     except VKAPIError as exc:
         logger.error(
             "VKInterface: не удалось отправить клавиатуру (%s) — включите 'Возможности ботов' "
             "в настройках сообщества (Управление → Сообщения). Отправляю ответ без клавиатуры.",
             exc,
         )
-        await send(text)
+        await send(text, **extra)
 
 
 class CatalogUploadError(Exception):
@@ -119,6 +128,38 @@ def catalog_file_token(payload: dict | None) -> str | None:
     if isinstance(token, str) and token.strip():
         return token.strip()
     return None
+
+
+def vk_doc_attachment(url: str | None) -> str | None:
+    """https://vk.com/doc{owner}_{id} → вложение сообщения doc{owner}_{id}."""
+    if not url or not url.startswith("https://vk.com/doc"):
+        return None
+    return url.removeprefix("https://vk.com/")
+
+
+def append_doc_attachment(
+    text: str, attachment: str | None, url: str | None
+) -> tuple[str, str | None]:
+    """Добавляет документ к сообщению. Адрес vk.com в текст не попадает."""
+    doc = vk_doc_attachment(url)
+    if not doc:
+        return f"{text}\n\n{ATTACHMENT_FAILED_TEXT}", attachment
+    if attachment:
+        return text, f"{attachment},{doc}"
+    return text, doc
+
+
+def doc_content_type(filename: str) -> str:
+    lowered = filename.lower()
+    if lowered.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if lowered.endswith(".rtf"):
+        return "application/rtf"
+    if lowered.endswith(".pdf"):
+        return "application/pdf"
+    if lowered.endswith(".json"):
+        return "application/json"
+    return "application/octet-stream"
 
 
 def catalog_doc_url_from_save(saved: object) -> str | None:
@@ -219,14 +260,18 @@ class VKInterface(BaseInterface):
             )
             outgoing = await self._bot_core.handle_message(incoming)
             text = outgoing.text
+            attachment = None
             catalog_bytes = outgoing.catalog_pdf
             if catalog_bytes or outgoing.catalog_html:
                 url = await self._upload_catalog_doc(
                     message, html=outgoing.catalog_html or "", pdf_bytes=catalog_bytes
                 )
-                if url:
-                    text = f"{text}\n\n{HELP_CATALOG_LINK_PREFIX}{url}"
-            await _send_with_keyboard_fallback(message.answer, text)
+                text, attachment = append_doc_attachment(text, attachment, url)
+            if outgoing.attachment:
+                filename, payload = outgoing.attachment
+                url = await self._upload_user_doc(message, filename, payload)
+                text, attachment = append_doc_attachment(text, attachment, url)
+            await _send_with_keyboard_fallback(message.answer, text, attachment=attachment)
 
     def _remember_catalog_url(self, digest: str, url: str) -> None:
         self._catalog_cache = (digest, url)
@@ -287,6 +332,51 @@ class VKInterface(BaseInterface):
     async def _upload_catalog_doc_uncached(
         self, message: Message, html: str, pdf_bytes: bytes | None
     ) -> str:
+        payload_pdf = pdf_bytes or await html_to_pdf(html)
+        return await self._post_doc(
+            message,
+            payload_pdf,
+            filename=CATALOG_DOC_FILENAME,
+            content_type="application/pdf",
+            title=CATALOG_DOC_TITLE,
+        )
+
+    async def _upload_user_doc(self, message: Message, filename: str, payload: bytes) -> str | None:
+        """Документ пользователю: тот же upload, что у PDF-каталога, с повтором."""
+        title = Path(filename).stem
+        last_error: Exception | None = None
+        for attempt in range(1, CATALOG_UPLOAD_ATTEMPTS + 1):
+            try:
+                return await self._post_doc(
+                    message,
+                    payload,
+                    filename=filename,
+                    content_type=doc_content_type(filename),
+                    title=title,
+                )
+            except Exception as exc:  # noqa: BLE001 - повтор, вложение не должно ронять ответ
+                last_error = exc
+                logger.warning(
+                    "VKInterface: загрузка файла %s, попытка %s/%s: %s",
+                    filename,
+                    attempt,
+                    CATALOG_UPLOAD_ATTEMPTS,
+                    exc,
+                )
+            if attempt < CATALOG_UPLOAD_ATTEMPTS:
+                await asyncio.sleep(CATALOG_UPLOAD_RETRY_DELAY_S)
+        logger.error("VKInterface: не удалось прикрепить файл %s: %s", filename, last_error)
+        return None
+
+    async def _post_doc(
+        self,
+        message: Message,
+        payload: bytes,
+        *,
+        filename: str,
+        content_type: str,
+        title: str,
+    ) -> str:
         api = message.ctx_api
         server = await api.docs.get_messages_upload_server(peer_id=message.peer_id, type="doc")
         upload_url = getattr(server, "upload_url", None)
@@ -295,29 +385,21 @@ class VKInterface(BaseInterface):
         if not upload_url:
             raise CatalogUploadError("docs.getMessagesUploadServer не вернул upload_url")
 
-        payload_pdf = pdf_bytes or await html_to_pdf(html)
         form = aiohttp.FormData()
-        form.add_field(
-            "file",
-            payload_pdf,
-            filename=CATALOG_DOC_FILENAME,
-            content_type="application/pdf",
-        )
+        form.add_field("file", payload, filename=filename, content_type=content_type)
         async with aiohttp.ClientSession(timeout=_UPLOAD_TIMEOUT) as session:
             async with session.post(upload_url, data=form) as response:
                 raw = await response.text()
                 status = response.status
 
-        payload = parse_docs_upload_payload(raw)
-        file_token = catalog_file_token(payload)
+        uploaded = parse_docs_upload_payload(raw)
+        file_token = catalog_file_token(uploaded)
         if not file_token:
             snippet = (raw or "")[:200]
-            error = payload.get("error") if payload else None
-            raise CatalogUploadError(
-                f"upload HTTP {status}, error={error!r}, body={snippet!r}"
-            )
+            error = uploaded.get("error") if uploaded else None
+            raise CatalogUploadError(f"upload HTTP {status}, error={error!r}, body={snippet!r}")
 
-        saved = await api.docs.save(file=file_token, title=CATALOG_DOC_TITLE)
+        saved = await api.docs.save(file=file_token, title=title)
         url = catalog_doc_url_from_save(saved)
         if not url:
             raise CatalogUploadError(f"docs.save не вернул id документа: {saved!r}")

@@ -6,7 +6,7 @@
 
 Общая часть (структура `.env`, проверка токенов, команды запуска) одинакова для обоих сценариев — различаются только шаги установки окружения.
 
-Текущий релиз **1.2.1**: [Legal news VK AI-bot 1.2.1](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2.1) (архив `vkbot-garant-1.2.1.zip`). Репозиторий: https://github.com/dmitrijtrudradost/legal_news_bot
+Текущий релиз **чатбот_гарант_версия 1.2.2**: [чатбот_гарант_версия 1.2.2](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2.2) (архив `vkbot-garant-1.2.2.zip`). Репозиторий: https://github.com/dmitrijtrudradost/legal_news_bot
 
 ---
 
@@ -20,8 +20,20 @@
 | `GARANT_BROWSER_BASE_URL` | нет | Лента browser, по умолчанию `https://internet.garant.ru`. Для демо: `https://demo.garant.ru` |
 | `GARANT_TOKEN` | нет (опционально) | Токен официального API ГАРАНТ Коннект (`https://api.garant.ru`) — режим "api" модуля новостей ГАРАНТ ПРАЙМ |
 | `GARANT_MODE` | нет (опционально) | `browser`/`api`/`mcp` — явный выбор режима новостей; без него режим определяется автоматически по тому, что заполнено выше (см. README, раздел "Модуль новостей ГАРАНТ ПРАЙМ") |
+| `GARANT_TEMPLATES_DIR` | нет | Папка шаблонов договоров. По умолчанию `downloads/templates` |
+| `LIBREOFFICE_PATH` | нет | Путь к `soffice`, если LibreOffice не в PATH. Нужен, чтобы RTF шаблона стал `.docx` |
 
-Без `GARANT_LOGIN`/`GARANT_PASSWORD`/`GARANT_TOKEN` бот работает как обычно, на новостной запрос ответит "изменений не найдено".
+Без `GARANT_LOGIN`/`GARANT_PASSWORD`/`GARANT_TOKEN` бот работает как обычно, на новостной запрос ответит "изменений не найдено". Шаблоны договоров доступны только в режиме `api` с `GARANT_TOKEN`. Для `.docx` нужен LibreOffice (`soffice` в PATH или `LIBREOFFICE_PATH`); без него сохраняется RTF, который открывает Word.
+
+Команды выгрузки из корня проекта:
+
+```bash
+python -m exports.export_vk_history --from 2026-09-10
+python -m exports.export_garant_templates --list
+python -m exports.export_garant_templates --limit 2
+```
+
+В чате: «шаблоны договоров», «шаблон 1» или «шаблон» и часть названия.
 
 Без этих значений под рукой запускать бота бессмысленно — подготовьте их перед началом установки.
 
@@ -45,7 +57,7 @@ python --version
 cd "C:\Users\Дмитрий\Desktop\zerocoder_kurs\задание_9_vkbot_парсер"
 ```
 
-Если разворачиваете с нуля — клонируйте репозиторий или скачайте архив релиза [1.2.1](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2.1):
+Если разворачиваете с нуля — клонируйте репозиторий или скачайте архив релиза [1.2.2](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2.2):
 
 ```powershell
 git clone https://github.com/dmitrijtrudradost/legal_news_bot.git
@@ -93,6 +105,7 @@ GARANT_PASSWORD=
 GARANT_TOKEN=
 GARANT_MODE=
 GARANT_BROWSER_BASE_URL=https://internet.garant.ru
+GARANT_TEMPLATES_DIR=downloads/templates
 ```
 
 ### 7. Прогнать автотесты (опционально, но рекомендуется)
@@ -143,7 +156,7 @@ git clone https://github.com/dmitrijtrudradost/legal_news_bot.git
 cd legal_news_bot
 ```
 
-Архив релиза: [vkbot-garant-1.2.1.zip](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2.1). Либо скопировать проект на сервер `scp`/`rsync`.
+Архив релиза: [vkbot-garant-1.2.2.zip](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2.2). Либо скопировать проект на сервер `scp`/`rsync`.
 
 ### 4. Создать и активировать виртуальное окружение
 
@@ -185,6 +198,7 @@ GARANT_PASSWORD=
 GARANT_TOKEN=
 GARANT_MODE=
 GARANT_BROWSER_BASE_URL=https://internet.garant.ru
+GARANT_TEMPLATES_DIR=downloads/templates
 ```
 
 Сохранить (`Ctrl+O`, `Enter`, `Ctrl+X` в nano). Проверить, что файл не попадёт в git (`.gitignore` уже это учитывает).
@@ -211,7 +225,7 @@ python main.py --vk
 
 ```ini
 [Unit]
-Description=VK AI-bot
+Description=Гарант-ai-бот
 After=network.target
 
 [Service]

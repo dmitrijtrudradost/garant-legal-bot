@@ -12,6 +12,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from core.garant import api_client as api_client_module
 from core.models import NewsQuery
 from core.news import parser_api as parser_api_module
 from core.news.parser_api import (
@@ -69,7 +70,7 @@ class FakeSession:
 def patch_session(monkeypatch, responses: list[FakeResponse]) -> list[dict]:
     calls: list[dict] = []
     queue = list(responses)
-    monkeypatch.setattr(parser_api_module.aiohttp, "ClientSession", lambda: FakeSession(queue, calls))
+    monkeypatch.setattr(api_client_module.aiohttp, "ClientSession", lambda: FakeSession(queue, calls))
     return calls
 
 
@@ -104,6 +105,7 @@ def _no_sleep(monkeypatch):
         return None
 
     monkeypatch.setattr(parser_api_module.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(api_client_module.asyncio, "sleep", _sleep)
 
 
 # -- fetch(): маппинг и чанкование ---------------------------------------------

@@ -138,22 +138,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import ssl
 from datetime import date, timedelta
-from typing import NoReturn
 
-import aiohttp
-import certifi
-
+from core.garant.api_client import (
+    GARANT_API_BASE_URL,
+    GarantApiClient,
+    GarantApiError,
+    GarantApiNotFoundError,
+)
 from core.models import NewsItem, NewsQuery
 from core.news import category_tree
 from core.news.parser_base import NewsParser
 
 logger = logging.getLogger(__name__)
 
-_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
-
-GARANT_API_BASE_URL = "https://api.garant.ru"
+# Совместимость: ошибки и базовый URL по-прежнему импортируются отсюда.
 GARANT_API_CATEGORIES_PATH = "/v2/prime"
 GARANT_API_NEWS_PATH = "/v2/prime/create-news"
 GARANT_API_TOPIC_PATH = "/v2/topic"
@@ -175,35 +174,9 @@ MAX_LOOKBACK_DAYS = 365
 иначе 400. Независимое правило от MAX_CHUNK_DAYS (ширина одного вызова) и
 MAX_CHUNKS_PER_FETCH (побочный эффект чанкования) — см. п.4 в докстроке модуля."""
 
-RATE_LIMIT_RETRY_DELAY_SECONDS = 1.0
-"""Пауза перед единственной повторной попыткой после 429. Консервативное
-значение "на глаз" — документация не называет точную цифру лимита для
-новостных эндпоинтов, подтверждено только "не более 20 запросов в секунду"
-для API в целом."""
-
 INTER_CHUNK_DELAY_SECONDS = 0.2
 """Пауза между последовательными запросами чанков при разбиении периода —
 защита от провоцирования 429 самим чанкованием (п.4 в докстроке модуля)."""
-
-
-class GarantApiError(Exception):
-    """Ошибка обращения к API ГАРАНТ (сеть, авторизация, лимиты, прочее).
-
-    `user_message` — текст, безопасный для показа пользователю бота
-    (тот же принцип, что и в `AIClientError`, см. `core/ai_client.py`).
-    """
-
-    def __init__(self, user_message: str, *, technical_details: str = "") -> None:
-        super().__init__(technical_details or user_message)
-        self.user_message = user_message
-
-
-class GarantApiNotFoundError(GarantApiError):
-    """404 — конкретная категория (или документ) не найдена.
-
-    Отдельный подкласс, чтобы `_fetch_chunk` мог отличить "эту категорию
-    нужно заменить на fallback" от остальных ошибок, которые сразу
-    пробрасываются наружу (см. п.6 в докстроке модуля)."""
 
 
 class GarantApiParser(NewsParser):
@@ -220,6 +193,12 @@ class GarantApiParser(NewsParser):
         self._base_url = base_url
         self._fetch_exact_dates = fetch_exact_dates
         self._category_tree: dict | None = None
+        self._client = GarantApiClient(token, base_url, log_name="GarantApiParser")
+
+    @property
+    def api_client(self) -> GarantApiClient:
+        """Общий HTTP-клиент — его же использует выгрузка шаблонов договоров."""
+        return self._client
 
     async def fetch(self, query: NewsQuery) -> list[NewsItem]:
         self._warn_if_unsupported_fields_set(query)
@@ -492,103 +471,15 @@ class GarantApiParser(NewsParser):
         json_body: dict | None = None,
         _retry: bool = True,
     ) -> dict | list:
-        """Общий HTTP-вызов к api.garant.ru — заголовки, SSL-контекст, разбор ошибок.
+        """HTTP-вызов через `GarantApiClient` (новостные тексты ошибок, scope=news).
 
-        Токен никогда не попадает в лог (см. п.6 докстроки модуля)."""
-        url = f"{self._base_url}{path}"
-        headers = {"Authorization": f"Bearer {self._token}", "Accept": "application/json"}
-        if json_body is not None:
-            headers["Content-type"] = "application/json"
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                request = (
-                    session.post(url, json=json_body, headers=headers, ssl=_SSL_CONTEXT)
-                    if method == "POST"
-                    else session.get(url, headers=headers, ssl=_SSL_CONTEXT)
-                )
-                async with request as response:
-                    if response.status == 200:
-                        return await response.json()
-
-                    if response.status == 429 and _retry:
-                        logger.warning(
-                            "GarantApiParser: 429 на %s — пауза %sс и одна повторная попытка.",
-                            path,
-                            RATE_LIMIT_RETRY_DELAY_SECONDS,
-                        )
-                        await asyncio.sleep(RATE_LIMIT_RETRY_DELAY_SECONDS)
-                        return await self._call_api(method, path, json_body=json_body, _retry=False)
-
-                    body = await response.text()
-                    self._raise_for_status(response.status, path, body)
-
-        except aiohttp.ClientError as exc:
-            logger.error("GarantApiParser: сетевая ошибка при обращении к %s: %s", path, exc)
-            raise GarantApiError(
-                "Извините, не удалось связаться с источником новостей ГАРАНТ (проблема сети). Попробуйте позже.",
-                technical_details=str(exc),
-            ) from exc
-
-    def _raise_for_status(self, status: int, path: str, body: str) -> NoReturn:
-        safe_body = body[:500]  # тело запроса/ответа без токена — заголовки сюда не попадают
-
-        if status == 400:
-            logger.error("GarantApiParser: 400 Bad Request на %s: %s", path, safe_body)
-            raise GarantApiError(
-                "Извините, сейчас не удалось получить новости (некорректный запрос к источнику).",
-                technical_details=safe_body,
-            )
-        if status == 401:
-            logger.error("GarantApiParser: 401 Unauthorized на %s — требуется обновить GARANT_TOKEN.", path)
-            raise GarantApiError(
-                "Извините, источник новостей ГАРАНТ временно недоступен (проблема с доступом).",
-                technical_details=safe_body,
-            )
-        if status == 403:
-            logger.error("GarantApiParser: 403 Forbidden на %s: %s", path, safe_body)
-            raise GarantApiError(
-                "Извините, источник новостей ГАРАНТ недоступен (недостаточно прав/лицензии).",
-                technical_details=safe_body,
-            )
-        if status == 404:
-            logger.warning("GarantApiParser: 404 Not Found на %s: %s", path, safe_body)
-            raise GarantApiNotFoundError(
-                "Извините, сейчас не удалось получить новости по заданной категории.",
-                technical_details=safe_body,
-            )
-        if status == 423:
-            if path.startswith(GARANT_API_TOPIC_PATH):
-                logger.error(
-                    "GarantApiParser: 423 на %s — квота метода «Информация о документе» "
-                    "(не более 300 запросов в календарный месяц) исчерпана: %s",
-                    path,
-                    safe_body,
-                )
-                raise GarantApiError(
-                    "Извините, лимит уточнения точных дат новостей на этот месяц исчерпан "
-                    "(не более 300 запросов в календарный месяц) — показаны даты по умолчанию.",
-                    technical_details=safe_body,
-                )
-            logger.error("GarantApiParser: 423 на %s — месячная квота исчерпана: %s", path, safe_body)
-            raise GarantApiError(
-                "Извините, источник новостей ГАРАНТ временно недоступен "
-                "(исчерпана квота запросов до конца месяца).",
-                technical_details=safe_body,
-            )
-        if status == 429:
-            # Сюда попадаем, только если повторная попытка в _call_api тоже вернула 429.
-            logger.error("GarantApiParser: 429 на %s даже после повторной попытки.", path)
-            raise GarantApiError(
-                "Извините, источник новостей ГАРАНТ сейчас перегружен запросами. Попробуйте позже.",
-                technical_details=safe_body,
-            )
-
-        logger.error("GarantApiParser: неожиданный статус %s на %s: %s", status, path, safe_body)
-        raise GarantApiError(
-            "Извините, сейчас не удалось получить новости. Попробуйте позже.",
-            technical_details=safe_body,
-        )
+        Токен никогда не попадает в лог (см. п.6 докстроки модуля). Повтор 429
+        делает клиент; аргумент `_retry` оставлен для совместимости сигнатуры.
+        """
+        del _retry
+        if method == "POST":
+            return await self._client.post_json(path, json_body or {}, scope="news")
+        return await self._client.get_json(path, scope="news")
 
     # -- Маппинг в NewsItem ------------------------------------------------
 
@@ -622,6 +513,8 @@ class GarantApiParser(NewsParser):
             logger.warning("GarantApiParser: не удалось получить точную дату для topic=%s: %s", topic_id, exc)
             return None
 
+        if not isinstance(data, dict):
+            return None
         raw_date = data.get("date")
         if not raw_date:
             return None

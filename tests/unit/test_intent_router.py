@@ -134,6 +134,18 @@ def test_is_limits_request_exact_phrases():
     assert "остаток запросов" in HELP_TEXT
 
 
+def test_template_command_exact_phrases():
+    assert IntentRouter.template_command("шаблоны договоров") == ("list", "")
+    assert IntentRouter.template_command("Шаблоны договоров") == ("list", "")
+    assert IntentRouter.template_command("шаблон 1") == ("one", "1")
+    assert IntentRouter.template_command("шаблон аренды офиса") == ("one", "аренды офиса")
+    assert IntentRouter.template_command("какие шаблоны договоров") is None
+    assert IntentRouter.template_command("шаблон") is None
+    assert IntentRouter.template_command("сохранить") == ("save", "")
+    assert IntentRouter.template_command("сохрани список") is None
+    assert "сохранить" in HELP_TEXT
+
+
 def test_is_custom_period_help_request_without_dates():
     assert IntentRouter.is_custom_period_help_request("📅 Свой период") is True
     assert IntentRouter.is_custom_period_help_request("хочу свой период новостей") is True

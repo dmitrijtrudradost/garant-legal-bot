@@ -23,9 +23,11 @@ class OutgoingMessage:
     text: str
     catalog_html: str | None = None
     """Самодостаточный HTML-каталог сфер и фильтров. Интерфейс сам решает,
-    как его доставить (ссылка vk.com/doc, file:// в консоли). None — каталога нет."""
+    как его доставить (вложение документа в VK, file:// в консоли). None — каталога нет."""
     catalog_pdf: bytes | None = None
     """PDF того же каталога для загрузки в VK и сохранения в docs/."""
+    attachment: tuple[str, bytes] | None = None
+    """Файл для пользователя: имя и байты (шаблон договора .docx или .rtf)."""
 
 
 @dataclass

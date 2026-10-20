@@ -4,7 +4,7 @@ __pycache__/
 .env
 tz/
 releases/
-
+downloads/
 # служебные каталоги, создаются автоматически при запуске/тестах
 .vkbottle/
 .pytest_cache/
