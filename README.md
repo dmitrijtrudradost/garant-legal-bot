@@ -48,8 +48,8 @@
 Полная пошаговая инструкция (локально и на удалённом сервере, включая запуск как systemd-сервиса) — в [INSTALL.md](INSTALL.md). Коротко:
 
 ```bash
-git clone https://github.com/dmitrijtrudradost/legal_news_bot.git
-cd legal_news_bot
+git clone https://github.com/dmitrijtrudradost/garant-legal-bot.git
+cd garant-legal-bot
 
 # Создание виртуального окружения
 python -m venv .venv
