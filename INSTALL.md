@@ -6,7 +6,7 @@
 
 Общая часть (структура `.env`, проверка токенов, команды запуска) одинакова для обоих сценариев — различаются только шаги установки окружения.
 
-Текущий релиз **чатбот_гарант_версия 1.2.2**: [чатбот_гарант_версия 1.2.2](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2.2) (архив `vkbot-garant-1.2.2.zip`). Репозиторий: https://github.com/dmitrijtrudradost/legal_news_bot
+Текущий релиз **чатбот_гарант_версия 1.2.2**: [чатбот_гарант_версия 1.2.2](https://github.com/dmitrijtrudradost/garant-legal-bot/releases/tag/v1.2.2) (архив `vkbot-garant-1.2.2.zip`). Репозиторий: https://github.com/dmitrijtrudradost/garant-legal-bot
 
 ---
 
@@ -57,11 +57,11 @@ python --version
 cd "C:\Users\Дмитрий\Desktop\zerocoder_kurs\задание_9_vkbot_парсер"
 ```
 
-Если разворачиваете с нуля — клонируйте репозиторий или скачайте архив релиза [1.2.2](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2.2):
+Если разворачиваете с нуля — клонируйте репозиторий или скачайте архив релиза [1.2.2](https://github.com/dmitrijtrudradost/garant-legal-bot/releases/tag/v1.2.2):
 
 ```powershell
-git clone https://github.com/dmitrijtrudradost/legal_news_bot.git
-cd legal_news_bot
+git clone https://github.com/dmitrijtrudradost/garant-legal-bot.git
+cd garant-legal-bot
 ```
 
 ### 3. Создать и активировать виртуальное окружение
@@ -152,11 +152,11 @@ python3 --version   # убедиться, что 3.12+
 ### 3. Получить код проекта
 
 ```bash
-git clone https://github.com/dmitrijtrudradost/legal_news_bot.git
-cd legal_news_bot
+git clone https://github.com/dmitrijtrudradost/garant-legal-bot.git
+cd garant-legal-bot
 ```
 
-Архив релиза: [vkbot-garant-1.2.2.zip](https://github.com/dmitrijtrudradost/legal_news_bot/releases/tag/v1.2.2). Либо скопировать проект на сервер `scp`/`rsync`.
+Архив релиза: [vkbot-garant-1.2.2.zip](https://github.com/dmitrijtrudradost/garant-legal-bot/releases/tag/v1.2.2). Либо скопировать проект на сервер `scp`/`rsync`.
 
 ### 4. Создать и активировать виртуальное окружение
 
